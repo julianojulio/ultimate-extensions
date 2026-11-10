@@ -29,16 +29,20 @@ outros projetos) e não do produto de ninguém. O que **não** entra: UI ou regr
 **O que resolve:** com mais de um projeto aberto nesta máquina, trocar de um para outro e responder «onde
 está acontecendo algo agora» sem janela nem terminal: um **rail** de 48px na borda esquerda da janela,
 presente em todas as superfícies, com um tile de iniciais por projeto — os hosts de pé em cima, os
-parados embaixo —, o bloco inteiro como alvo do clique e o número da porta fora da tela. Um projeto de
-pé abre naquele projeto nesta aba; um parado sobe; o painel do tile (hover ou foco) diz a porta, o estado
-escrito, quantas conversas daquele projeto estão trabalhando e quantas perguntas esperam resposta,
-medido na hora em que o painel abre, com a hora; e o `+` cria um projeto a partir de uma pasta. No
-celular não há rail: a gaveta da sidebar continua com a lista compacta, com as medidas.
+parados embaixo —, o bloco inteiro como alvo do clique, o número da porta fora da tela e, no canto de
+cada tile, o **ponto de presença** do app: cinza parado, verde ocioso, pulsando quando trabalha, e o
+número de perguntas sem resposta em âmbar. Um projeto de pé abre naquele projeto nesta aba; um parado
+sobe; o painel do tile (hover ou foco) diz a porta, o estado escrito, quantas conversas daquele projeto
+estão trabalhando e quantas perguntas esperam resposta, medido na hora em que o painel abre, com a hora;
+o `+` cria um projeto a partir de uma pasta; e o interruptor do pé liga e desliga a **animação do
+splash**, escrevendo só essa entrada nas settings desta máquina. No celular não há rail: a gaveta da
+sidebar continua com a lista compacta, com as medidas.
 
-**O que não faz:** não mede nada sem o painel abrir (e nunca inventa um zero), não mostra a porta no
+**O que não faz:** não mede o host a cada instante (o indicador diz de quando é), não mostra a porta no
 tile, não agenda nada, não faz poll, não mata processo que não subiu sem perguntar (e nunca por porta,
-nome ou grupo), não esconde nem move projeto, não decide onboarding nem confiança por um projeto novo e
-não alcança outra máquina. Detalhe em [`projetos/README.md`](projetos/README.md).
+nome ou grupo), não esconde nem move projeto, não decide onboarding nem confiança por um projeto novo,
+não mexe em extensão nenhuma além do splash (e só na camada desta máquina) e não alcança outra máquina.
+Detalhe em [`projetos/README.md`](projetos/README.md).
 
 ### `rate-limiter` — teto de pedidos simultâneos por provedor
 
@@ -74,6 +78,7 @@ conversa:
 ```ts
 ultimate.action('projetos', 'listar', {})              // os projetos da máquina, com estado e medidas
 ultimate.action('projetos', 'listar', { medir: false }) // a leitura barata do rail, sem medida
+ultimate.action('projetos', 'splash', { enabled: false }) // desliga a animação do splash (e true liga)
 ultimate.action('rate-limiter', 'status', {})          // { wrapped, limits, active, queued }
 ```
 
@@ -93,8 +98,8 @@ módulo. Medição feita nesta máquina, com as duas extensões vivas:
 E não foi só o `loadedAt`: a edição de prova somou um campo temporário ao retorno de `listar`
 (`sonda: 'symlink-reload'`), que a ação devolveu em seguida. Ou seja, o módulo relido era **o do
 alvo do link**, com o conteúdo novo — não um cache, nem o arquivo do link. Removida a sonda, a ação
-voltou a devolver `{ projetos, at }`. A `rate-limiter` respondeu `status` normalmente o tempo todo, e
-**o host não foi reiniciado**.
+voltou a devolver `{ projetos, at, splash }`. A `rate-limiter` respondeu `status` normalmente o tempo
+todo, e **o host não foi reiniciado**.
 
 Por isso a instalação é por symlink: edita-se aqui, e o Ultimate recarrega sozinho.
 
@@ -104,7 +109,7 @@ O código é **daqui**; `~/.ultimate/extensions/<nome>` é só o link que o Ulti
 `git pull` (ou de mover o clone), rode o `install.sh` de novo.
 
 ```sh
-cd ~/src/ultimate-extensions/projetos     && node --test projetos.test.ts   # 18 testes
+cd ~/src/ultimate-extensions/projetos     && node --test projetos.test.ts   # 26 testes
 cd ~/src/ultimate-extensions/rate-limiter && node --test limiter.test.ts    # 12 testes
 ```
 
@@ -120,12 +125,12 @@ ultimate-extensions/
 ├── LICENSE             # MIT
 ├── projetos/           # o rail de projetos na borda esquerda
 │   ├── README.md
-│   ├── server.ts        # ações: listar, medir, estado, iniciar, criar, parar
-│   ├── projetos.ts      # as contas puras (iniciais, grupos, caminho, porta, decisão de parada)
+│   ├── server.ts        # ações: listar, medir, estado, iniciar, criar, parar, splash
+│   ├── projetos.ts      # as contas puras (iniciais, grupos, presença, caminho, porta, parada, splash)
 │   ├── tipos.ts         # o que as ações devolvem
-│   ├── web.tsx          # o rail, o painel do tile, o diálogo do + e a lista do celular
+│   ├── web.tsx          # o rail, o painel do tile, o diálogo do +, a lista do celular e o pé
 │   ├── projetos.test.ts
-│   └── screenshots/     # rail, painel e diálogo de um projeto novo
+│   └── screenshots/     # rail, estado, pé, painel e diálogo de um projeto novo
 └── rate-limiter/       # teto de pedidos simultâneos por provedor
     ├── README.md
     ├── server.ts        # embrulha o stream do provedor; ação: status

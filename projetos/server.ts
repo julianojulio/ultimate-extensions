@@ -31,19 +31,36 @@
  *
  * O estado verdadeiro é sempre o lock relido, nunca uma lista em memória: a extensão pode recarregar
  * entre uma ação e outra. Não há poll — a tela lê ao abrir e de novo no botão de atualizar.
+ *
+ * Fora do home dos projetos que ela subiu, esta extensão escreve **um** arquivo só: o
+ * `~/.ultimate/settings.json` desta máquina, quando o botão do pé do rail liga ou desliga a animação do
+ * splash (a ação `splash`). Ali também nada vem de memória: a ação lê o arquivo, mexe só na entrada
+ * `splash` de `extensions.disable` e recusa, sem escrever, o que o core recusaria inteiro — JSON
+ * inválido, `extensions` que não é objeto (ver README).
  */
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { closeSync, openSync } from 'node:fs'
-import { mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
 import type { JsonValue } from '@earendil-works/chord'
 import { defineExtension } from '@earendil-works/pi-durable'
 import {
+  ajustarSplash,
   argumentosDeInicio,
   caminhoAbsoluto,
   comando,
@@ -51,6 +68,8 @@ import {
   escolherPorta,
   homeDoProjeto,
   programaDeInicio,
+  settingsDoUsuario,
+  splashLigado,
 } from './projetos.ts'
 import type {
   Estado,
@@ -59,6 +78,7 @@ import type {
   ResultadoDaCriacao,
   ResultadoDaParada,
   Secao,
+  Splash,
 } from './tipos.ts'
 
 export default defineExtension({ name: 'projetos' })
@@ -258,6 +278,55 @@ function usuario(): string {
   return process.env.ULTIMATE_USER_HOME ?? homedir()
 }
 
+/**
+ * As settings desta máquina, lidas na hora: o objeto, ou o motivo de ele não servir para uma escrita. Um
+ * arquivo ausente é um objeto vazio — desligar o splash cria o arquivo, ligar não tem o que criar.
+ */
+async function lerSettings(): Promise<{ settings?: Record<string, unknown>; erro?: string }> {
+  const path = settingsDoUsuario(usuario())
+  let texto: string
+  try {
+    texto = await readFile(path, 'utf8')
+  } catch (erro) {
+    if ((erro as NodeJS.ErrnoException).code === 'ENOENT') return {}
+    return { erro: `Cannot change the splash: ${path}: ${motivo(erro)}` }
+  }
+  try {
+    const valor: unknown = JSON.parse(texto)
+    if (!valor || typeof valor !== 'object' || Array.isArray(valor))
+      throw new Error('settings must be a JSON object')
+    return { settings: valor as Record<string, unknown> }
+  } catch (erro) {
+    return { erro: `Cannot change the splash: ${path}: ${motivo(erro)}. Nothing was written` }
+  }
+}
+
+/**
+ * Grava as settings por um temporário ao lado e um `rename`: um JSON pela metade não existe para quem lê o
+ * arquivo no meio do caminho. Se o arquivo é um link (settings em dotfiles), é o alvo que se reescreve —
+ * o link fica. O JSON é escrito normalizado, em dois espaços: a formatação de antes se perde.
+ */
+async function escreverSettings(path: string, settings: Record<string, unknown>) {
+  const alvo = await realpath(path).catch(() => path)
+  await mkdir(dirname(alvo), { recursive: true })
+  const temporario = join(dirname(alvo), `.${basename(alvo)}.${randomUUID()}.tmp`)
+  try {
+    await writeFile(temporario, JSON.stringify(settings, null, 2) + '\n', { flag: 'wx' })
+    await rename(temporario, alvo)
+  } finally {
+    await rm(temporario, { force: true })
+  }
+}
+
+/**
+ * O splash como os settings **desta máquina** o deixam agora, lido a cada chamada: nada em memória, porque
+ * a extensão recarrega entre uma e outra. Um arquivo que não se lê conta como ligado — é o que o core
+ * também faz com ele.
+ */
+async function splashAgora(): Promise<boolean> {
+  return splashLigado((await lerSettings()).settings)
+}
+
 /** O ambiente do host que se sobe: a identidade deste host não vale para outro projeto. */
 function ambiente(home: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
@@ -404,6 +473,16 @@ function pediuMedida(args: JsonValue): boolean {
   return (args as { medir?: unknown }).medir !== false
 }
 
+/** O botão do splash pediu ligado ou desligado: um booleano, nunca o que se adivinha de um `undefined`. */
+function ligadoDoArgumento(args: JsonValue): boolean {
+  const valor =
+    args && typeof args === 'object' && !Array.isArray(args)
+      ? (args as { enabled?: unknown }).enabled
+      : undefined
+  if (typeof valor !== 'boolean') throw new Error('enabled must be true or false')
+  return valor
+}
+
 /** O caminho que o diálogo do `+` mandou, como texto: vazio não é caminho, e o diálogo pede um. */
 function caminhoDoArgumento(args: JsonValue): string {
   const valor =
@@ -499,8 +578,11 @@ export const actions = {
     // Um home sem `project.json` (uma subida que morreu antes de registrar) não é projeto de nada:
     // não tem caminho, não se sobe e não se mede — mostrar um tile dele seria mentir sobre a máquina.
     const projetos = (await ctx.host.projects()).filter((projeto) => projeto.root)
+    // O botão do pé do rail diz o estado lido agora, não o de uma abertura anterior.
+    const splash = await splashAgora()
+    const at = new Date().toISOString()
     if (!pediuMedida(args))
-      return { projetos: projetos.map((projeto) => montar(projeto)), at: new Date().toISOString() }
+      return { projetos: projetos.map((projeto) => montar(projeto)), at, splash }
     const aqui: Medidas = { working: trabalhando(ctx), perguntasAbertas: await abertas(ctx) }
     const linhas = await Promise.all(
       projetos.map(async (projeto): Promise<Projeto> => {
@@ -519,7 +601,36 @@ export const actions = {
         }
       }),
     )
-    return { projetos: linhas, at: new Date().toISOString() }
+    return { projetos: linhas, at, splash }
+  },
+
+  /**
+   * Liga ou desliga a animação do splash nas settings **desta máquina**
+   * (`<home do usuário>/.ultimate/settings.json`): `splash` entra em `extensions.disable` (desligar) ou
+   * sai dela (ligar), e todas as outras chaves do arquivo ficam como estão. É o único lugar em que esta
+   * extensão escreve fora do home de um projeto que ela mesma subiu, e o settings de um projeto nunca é
+   * tocado — um projeto pode dizer o contrário por cima, e essa é a decisão dele.
+   *
+   * O que não se conseguiria preservar é recusado **sem escrever**: JSON inválido, arquivo que não é
+   * objeto, `extensions` que não é objeto, `disable` que não é lista de nomes — o core rejeitaria o
+   * arquivo inteiro, e o usuário perderia as outras chaves. A escrita é por temporário e `rename`.
+   */
+  async splash(args: JsonValue, _ctx: Contexto): Promise<Splash> {
+    const ligado = ligadoDoArgumento(args)
+    const path = settingsDoUsuario(usuario())
+    const lido = await lerSettings()
+    if (lido.erro) throw new Error(lido.erro)
+    // Sem arquivo, o ponto de partida é um objeto vazio: desligar cria o arquivo, ligar não cria nada.
+    const antes = lido.settings ?? {}
+    let depois: Record<string, unknown>
+    try {
+      depois = ajustarSplash(antes, ligado)
+    } catch (erro) {
+      throw new Error(`Cannot change the splash: ${path}: ${motivo(erro)}. Nothing was written`)
+    }
+    // `ajustarSplash` devolve o mesmo objeto quando não há o que mudar: nada se reescreve à toa.
+    if (depois !== antes) await escreverSettings(path, depois)
+    return { splash: ligado }
   },
 
   /**

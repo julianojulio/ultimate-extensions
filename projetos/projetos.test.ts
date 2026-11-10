@@ -14,6 +14,12 @@
  *   não é um host (não há nada a parar, e o clique sobe);
  * - o comando copiado é o comando que roda (`ultimate <caminho>`), com aspas quando o caminho pede —
  *   e nunca é executado por esta extensão;
+ * - o ponto do tile vem do esquema do app: pulsa quando trabalha, verde ocioso, cinza parado — e um host
+ *   que não respondeu não vira ocioso;
+ * - o número de perguntas é o do canto do tile (`1`..`9`, `9+`), e zero não desenha nada;
+ * - a frase do tile diz estado, contas e a hora da medida: o indicador envelhece, mas não mente;
+ * - o botão do splash escreve só a entrada `splash` de `extensions.disable` nas settings do usuário,
+ *   preservando as outras chaves, sem duplicar, e recusando o que o core recusaria inteiro;
  * - a pasta do diálogo do `+` vira caminho absoluto com `~` expandido, e um caminho relativo é recusado
  *   em vez de virar alguma pasta ao acaso;
  * - o home de um projeto novo é o mesmo que o Ultimate calcula (`<home>/.ultimate/projects/<nome>-<8>`).
@@ -21,6 +27,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
+  ajustarSplash,
   argumentosDeInicio,
   caminhoAbsoluto,
   comando,
@@ -32,17 +39,24 @@ import {
   iniciais,
   linkDo,
   medido,
+  numeroDePerguntas,
+  ondaDaLeitura,
   palavra,
   perguntas,
   podeParar,
   portaDo,
   PRIMEIRA_PORTA,
+  presenca,
   programaDeInicio,
+  rotuloDoSplash,
+  settingsDoUsuario,
+  splashLigado,
   temMedida,
   tituloDasPerguntas,
+  tituloDoTile,
 } from './projetos.ts'
 import type { Alvo } from './projetos.ts'
-import type { Projeto } from './tipos.ts'
+import type { Medida, Projeto, Secao } from './tipos.ts'
 
 /** Uma linha como o servidor a manda: de pé, com tantas conversas trabalhando e tantas perguntas. */
 const depe = (working: number | null, abertas: number | null = 0): Projeto => ({
@@ -291,4 +305,185 @@ test('um lock de pid morto não é host: não há o que parar, e a linha diz par
   assert.deepEqual(decisaoDeParada(undefined, 48362, true), { acao: 'nada' })
   // O lock morto continua no disco, mas a linha — e o botão — leem só o pid vivo.
   assert.equal(palavra({ name: 'gta2xlwifi-lineage', root: '/x', current: false }), 'stopped')
+})
+
+/** Uma medida da onda do rail, com a hora em que foi feita. */
+const medida = (
+  working: number | null,
+  abertas: number | null,
+  extra: { motivo?: string; at?: string } = {},
+): Medida => ({
+  working,
+  perguntasAbertas: abertas,
+  ...(extra.motivo ? { motivo: extra.motivo } : {}),
+  at: extra.at ?? '2026-11-10T03:22:43.079Z',
+})
+
+test('o ponto do tile: pulsa trabalhando, verde ocioso, cinza parado, vazado sem resposta', () => {
+  // Trabalhando: é a classe do mark do app (`animate-pulse-dot bg-brand`), não uma cor inventada aqui.
+  assert.equal(presenca(depe(2), medida(2, 0)), 'working')
+  // Zero é medida: nada trabalhando é ocioso de verdade.
+  assert.equal(presenca(depe(0), medida(0, 0)), 'idle')
+  // Parado não tem o que medir — e uma medida sobrando não inventa um host de pé.
+  assert.equal(presenca(parado, medida(3, 1)), 'stopped')
+  assert.equal(presenca(parado, undefined), 'stopped')
+  // De pé e sem leitura ainda (a onda não voltou): não se afirma nada.
+  assert.equal(presenca(depe(1), undefined), 'unavailable')
+  // O host de pé que não respondeu **não é ocioso**: é `unavailable`, com o motivo à mão.
+  assert.equal(presenca(depe(null), medida(null, null, { motivo: 'no answer in 3s' })), 'unavailable')
+  // Trabalha mesmo com pergunta aberta: as duas coisas cabem no tile (pulso e o número em âmbar).
+  assert.equal(presenca(depe(1), medida(1, 2)), 'working')
+  // Um número torto não vira trabalho.
+  assert.equal(presenca(depe(Number.NaN), medida(Number.NaN, 0)), 'idle')
+})
+
+test('o número de perguntas cabe no canto do tile: 1..9, 9+ acima, e nada em zero', () => {
+  assert.equal(numeroDePerguntas(1), '1')
+  assert.equal(numeroDePerguntas(9), '9')
+  // Acima de nove não cabe no canto: o número vira um aviso, não um dado exato.
+  assert.equal(numeroDePerguntas(10), '9+')
+  assert.equal(numeroDePerguntas(42), '9+')
+  // Zero não desenha contador nenhum, e o que não se mediu também não vira número.
+  assert.equal(numeroDePerguntas(0), undefined)
+  assert.equal(numeroDePerguntas(null), undefined)
+  assert.equal(numeroDePerguntas(undefined), undefined)
+  assert.equal(numeroDePerguntas(Number.NaN), undefined)
+  assert.equal(numeroDePerguntas(-1), undefined)
+})
+
+test('a frase do tile diz estado, contas e a hora da medida', () => {
+  // Parado: a frase de sempre, porque não há leitura nenhuma para citar.
+  assert.equal(tituloDoTile(parado, undefined, undefined), 'robsoncosta — stopped, click to start it')
+  // De pé: o estado, as contas como o painel as escreve, e **de quando** é a medida.
+  assert.equal(
+    tituloDoTile(depe(2), medida(2, 1), '21:53'),
+    'gta2xlwifi-lineage — running · 2 working · 1 unanswered question · measured at 21:53 — open it in this tab',
+  )
+  assert.equal(
+    tituloDoTile(depe(0), medida(0, 0), '21:53'),
+    'gta2xlwifi-lineage — running · 0 working · no unanswered questions · measured at 21:53 — open it in this tab',
+  )
+  // A onda ainda não voltou: o tile diz que não mediu, em vez de fingir um ocioso.
+  assert.equal(
+    tituloDoTile(depe(0), undefined, undefined),
+    'gta2xlwifi-lineage — running · not measured yet — open it in this tab',
+  )
+  // Sem resposta: `counts unavailable` com o motivo, e nunca um zero.
+  assert.equal(
+    tituloDoTile(depe(null), medida(null, null, { motivo: 'no answer in 3s' }), '21:53'),
+    'gta2xlwifi-lineage — running · counts unavailable — no answer in 3s · measured at 21:53 — open it in this tab',
+  )
+  // O projeto desta janela: a frase termina dizendo que ele é esta janela.
+  assert.equal(
+    tituloDoTile({ ...depe(0), current: true }, medida(0, 0), '21:53'),
+    'gta2xlwifi-lineage — running · 0 working · no unanswered questions · measured at 21:53 — this window',
+  )
+})
+
+test('a onda guarda uma medida por projeto de pé, com a hora da leitura', () => {
+  const secao: Secao = {
+    at: '2026-11-10T03:22:43.079Z',
+    splash: true,
+    projetos: [
+      depe(2, 1),
+      { name: 'travado', root: '/t', current: false, running: { pid: 7, url: 'http://127.0.0.1:4751' }, working: null, perguntasAbertas: null, motivo: 'no answer in 3s' },
+      parado,
+      // Um projeto de pé que só tem a contagem de perguntas medida não perde a entrada.
+      { name: 'soPerguntas', root: '/s', current: false, running: { pid: 8, url: 'http://127.0.0.1:4752' }, perguntasAbertas: 3 },
+    ],
+  }
+  const medidas = ondaDaLeitura(secao)
+  assert.deepEqual(Object.keys(medidas).sort(), ['gta2xlwifi-lineage', 'soPerguntas', 'travado'])
+  // A hora é a da leitura, não a de agora: o tile mostra de quando é o indicador.
+  assert.equal(medidas['gta2xlwifi-lineage'].at, secao.at)
+  assert.equal(medidas['gta2xlwifi-lineage'].working, 2)
+  assert.equal(medidas['gta2xlwifi-lineage'].perguntasAbertas, 1)
+  // O silêncio de um host travado chega como `null` com o motivo, não como zero.
+  assert.deepEqual(medidas['travado'], {
+    working: null,
+    perguntasAbertas: null,
+    motivo: 'no answer in 3s',
+    at: secao.at,
+  })
+  // Um zero medido continua zero (e não `null`): é uma resposta, não uma ausência.
+  assert.deepEqual(ondaDaLeitura({ at: secao.at, splash: true, projetos: [depe(0, 0)] }), {
+    'gta2xlwifi-lineage': { working: 0, perguntasAbertas: 0, at: secao.at },
+  })
+  // Nenhum projeto de pé: nenhuma medida, e nada de entrada inventada.
+  assert.deepEqual(ondaDaLeitura({ at: secao.at, splash: true, projetos: [parado] }), {})
+})
+
+test('o splash está desligado quando a lista disable o nomeia', () => {
+  assert.equal(splashLigado({ extensions: { disable: ['splash'] } }), false)
+  assert.equal(splashLigado({ extensions: { disable: ['splash', 'rate-limiter'] } }), false)
+  // O arquivo ausente, sem a chave, ou com outra coisa na lista: nada desligou o splash.
+  assert.equal(splashLigado(undefined), true)
+  assert.equal(splashLigado({}), true)
+  assert.equal(splashLigado({ extensions: {} }), true)
+  assert.equal(splashLigado({ extensions: { disable: ['rate-limiter'] } }), true)
+  // O que o core ignora inteiro (JSON torto, `extensions` que não é objeto) é lido como ligado.
+  assert.equal(splashLigado([]), true)
+  assert.equal(splashLigado({ extensions: [] }), true)
+  assert.equal(splashLigado({ extensions: 'splash' }), true)
+  assert.equal(splashLigado({ extensions: { disable: 'splash' } }), true)
+})
+
+test('desligar o splash põe splash em disable uma vez, e ligar tira', () => {
+  // Desligar um arquivo que ainda não fala de splash: a entrada nasce uma vez só.
+  assert.deepEqual(ajustarSplash({}, false), { extensions: { disable: ['splash'] } })
+  // Ligar tira o nome da lista — e as outras entradas ficam onde estavam.
+  assert.deepEqual(ajustarSplash({ extensions: { disable: ['rate-limiter', 'splash'] } }, true), {
+    extensions: { disable: ['rate-limiter'] },
+  })
+  // Nada de duplicar: desligar o que já está desligado não mexe no objeto (nem no arquivo).
+  const desligado = { extensions: { disable: ['splash'] } }
+  assert.equal(ajustarSplash(desligado, false), desligado)
+  // E ligar o que já está ligado também não reescreve nada.
+  const ligado = { modelFamilies: { fast: { model: 'cirthan-dev/x' } } }
+  assert.equal(ajustarSplash(ligado, true), ligado)
+  // As outras chaves do arquivo são o que o usuário escreveu: ficam todas, em qualquer nível.
+  const cheio = {
+    modelFamilies: { default: 'fast' },
+    lander: { checks: [['node --test', { timeout: 120 }]] },
+    extensions: { enable: ['parallel'], disable: ['rate-limiter'], orphans: 'não é meu' },
+  }
+  assert.deepEqual(ajustarSplash(cheio, false), {
+    ...cheio,
+    extensions: { ...cheio.extensions, disable: ['rate-limiter', 'splash'] },
+  })
+  // `extensions.enable` nunca é tocado: `disable` vence `enable` na mesma camada, então desligar
+  // funciona mesmo com o splash lá — e ligar não tira nada dele.
+  assert.deepEqual(ajustarSplash({ extensions: { enable: ['splash'] } }, false), {
+    extensions: { enable: ['splash'], disable: ['splash'] },
+  })
+  assert.deepEqual(ajustarSplash({ extensions: { enable: ['splash'], disable: ['splash'] } }, true), {
+    extensions: { enable: ['splash'], disable: [] },
+  })
+})
+
+test('o splash recusa, sem escrever, o que o core recusaria inteiro', () => {
+  // Um `extensions` que não é objeto faria o core jogar o arquivo todo fora — e o usuário perderia as
+  // outras chaves. Recusar é a única saída honesta.
+  for (const torto of [[], 'splash', null, 3]) {
+    assert.throws(
+      () => ajustarSplash({ extensions: torto }, false),
+      /extensions must be a JSON object/,
+    )
+  }
+  // Uma lista que não é lista de nomes também não se reescreve.
+  assert.throws(() => ajustarSplash({ extensions: { disable: 'splash' } }, false), /array of names/)
+  assert.throws(() => ajustarSplash({ extensions: { disable: [1] } }, true), /array of names/)
+  assert.throws(() => ajustarSplash({ extensions: { disable: {} } }, true), /array of names/)
+  // O arquivo que não é um objeto não é settings nenhum.
+  for (const torto of [[], 'x', null, undefined, 7]) {
+    assert.throws(() => ajustarSplash(torto, false), /settings must be a JSON object/)
+  }
+  assert.equal(settingsDoUsuario('/home/juliano'), '/home/juliano/.ultimate/settings.json')
+})
+
+test('a frase do botão do splash diz o estado e o que o clique faz', () => {
+  assert.equal(rotuloDoSplash(true), 'Splash on project switch: on — turn it off')
+  assert.equal(rotuloDoSplash(false), 'Splash on project switch: off — turn it on')
+  // Antes da primeira leitura o botão não chuta um estado.
+  assert.equal(rotuloDoSplash(undefined), 'Splash on project switch: unknown')
 })

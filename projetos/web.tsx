@@ -34,8 +34,10 @@ import {
   PlusIcon,
   RotateCwIcon,
   SquareIcon,
+  ToggleLeftIcon,
+  ToggleRightIcon,
 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, FormEvent, ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
@@ -57,14 +59,27 @@ import {
   iniciais,
   linkDo,
   medido,
+  numeroDePerguntas,
+  ondaDaLeitura,
   palavra,
   perguntas,
   podeParar,
   portaDo,
+  presenca,
+  rotuloDoSplash,
   temMedida,
   tituloDasPerguntas,
+  tituloDoTile,
 } from './projetos.ts'
-import type { Medida, Projeto, ResultadoDaCriacao, ResultadoDaParada, Secao } from './tipos.ts'
+import type { Presenca } from './projetos.ts'
+import type {
+  Medida,
+  Projeto,
+  ResultadoDaCriacao,
+  ResultadoDaParada,
+  Secao,
+  Splash,
+} from './tipos.ts'
 
 /** `{ medir?: false }` → os projetos da máquina. O rail pede a leitura barata: nenhum tile mostra número. */
 const SecaoAction = actionRef<{ medir?: boolean }, Secao>('projetos', 'listar')
@@ -83,6 +98,12 @@ const PararAction = actionRef<{ name: string; confirm?: boolean }, ResultadoDaPa
 
 /** `{ caminho }` → sobe o host de uma pasta (ou seleciona o projeto que já é aquela pasta). */
 const CriarAction = actionRef<{ caminho: string }, ResultadoDaCriacao>('projetos', 'criar')
+
+/** `{ enabled }` → liga ou desliga a animação do splash nas settings desta máquina. */
+const SplashAction = actionRef<{ enabled: boolean }, Splash>('projetos', 'splash')
+
+/** De quanto em quanto tempo passar o ponteiro no rail pode refazer a leitura de quem está de pé. */
+const INTERVALO_DA_ONDA = 15_000
 
 export default defineWebExtension({
   slots: {
@@ -108,21 +129,52 @@ function Lista() {
 }
 
 /**
- * A coluna: os rodando, a linha fina, os parados, e no pé o `+` e o botão de atualizar. O tile é uma
- * peça só — o link (ou o botão de subir) e o painel dele —, então abrir o painel é abrir um `<div>` de
- * 32px que já estava ali.
+ * A coluna: os rodando, a linha fina, os parados, e no pé o ⟳, o `+` e o botão da animação do splash. O
+ * tile é uma peça só — o link (ou o botão de subir), o ponto de presença e o painel dele —, então abrir o
+ * painel é abrir um `<div>` de 32px que já estava ali.
  */
 function Coluna() {
   const { data, error, loading, refetch } = useAction(SecaoAction, { medir: false })
   const [novo, setNovo] = useState(false)
-  // Um clique que muda a máquina mede de novo a coluna: o que mudou aparece sem poll.
-  const atualizar = () => refetch().then(() => {})
+  // A onda: o que cada host de pé está fazendo, por projeto, com a hora de cada medida. Ela é refeita ao
+  // montar, ao entrar no rail (no máximo a cada 15 s), no ⟳ e depois de cada ação — e nunca por um timer:
+  // o indicador diz de quando é, e uma leitura nova corrige.
+  const [medidas, setMedidas] = useState<Record<string, Medida>>({})
+  const [medindo, setMedindo] = useState(false)
+  const ultima = useRef(0)
+
+  const lerOnda = useCallback(async (forcar = false) => {
+    if (!forcar && Date.now() - ultima.current < INTERVALO_DA_ONDA) return
+    ultima.current = Date.now()
+    setMedindo(true)
+    try {
+      // A leitura completa: o `estado` de cada host de pé, em paralelo, com o prazo que já existe.
+      setMedidas(ondaDaLeitura(await api.action(SecaoAction, {})))
+    } catch {
+      // O rail continua com o que já sabia — e o `title` de cada tile diz de quando é.
+    } finally {
+      setMedindo(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void lerOnda()
+  }, [lerOnda])
+
+  // A medida que o painel de um tile fez vale para aquele tile no rail também, sem outra leitura.
+  const guardarMedida = useCallback((name: string, medida: Medida) => {
+    setMedidas((antes) => ({ ...antes, [name]: medida }))
+  }, [])
+
+  // O ⟳ e cada clique que muda a máquina releem a lista e medem todo mundo de novo.
+  const atualizar = () => refetch().then(() => lerOnda(true))
   const { rodando, parados } = grupos(data?.projetos ?? [])
   return (
     <nav
       aria-label="Projects"
       className="flex h-full w-12 shrink-0 flex-col items-center border-r border-sidebar-border bg-sidebar py-2"
       data-projects-rail
+      onPointerEnter={() => void lerOnda()}
     >
       <div className="flex w-full min-h-0 flex-1 flex-col items-center gap-1 overflow-y-auto">
         {error ? (
@@ -138,25 +190,39 @@ function Coluna() {
         ) : (
           <>
             {rodando.map((projeto) => (
-              <Tile key={projeto.root} onChanged={atualizar} projeto={projeto} />
+              <Tile
+                key={projeto.root}
+                medida={medidas[projeto.name]}
+                onChanged={atualizar}
+                onMedida={guardarMedida}
+                projeto={projeto}
+              />
             ))}
             {rodando.length > 0 && parados.length > 0 && (
               <span aria-hidden="true" className="my-1.5 h-px w-6 shrink-0 bg-foreground/20" />
             )}
             {parados.map((projeto) => (
-              <Tile key={projeto.root} onChanged={atualizar} projeto={projeto} />
+              <Tile
+                key={projeto.root}
+                medida={medidas[projeto.name]}
+                onChanged={atualizar}
+                onMedida={guardarMedida}
+                projeto={projeto}
+              />
             ))}
           </>
         )}
       </div>
       <div className="flex shrink-0 flex-col items-center gap-1 pt-1">
         <Icone
-          className={cn('size-6', loading && 'pointer-events-none')}
+          className={cn('size-6', (loading || medindo) && 'pointer-events-none')}
           label="Measure the projects again"
           onClick={() => void atualizar()}
-          title={data ? `Measured at ${formatTime(data.at)} · measure again` : 'Measure again'}
+          title={
+            data ? `Measured at ${formatTime(data.at)} · measure again` : 'Measure again'
+          }
         >
-          <RotateCwIcon className={cn('size-3', loading && 'animate-spin')} />
+          <RotateCwIcon className={cn('size-3', (loading || medindo) && 'animate-spin')} />
         </Icone>
         <Icone
           className="size-6"
@@ -166,6 +232,7 @@ function Coluna() {
         >
           <PlusIcon className="size-3.5" />
         </Icone>
+        <BotaDoSplash onChanged={atualizar} splash={data?.splash} />
       </div>
       <NovoProjeto onChanged={atualizar} onOpenChange={setNovo} open={novo} />
     </nav>
@@ -173,19 +240,90 @@ function Coluna() {
 }
 
 /**
- * Um projeto no rail: 32px de iniciais. De pé e fora desta janela é um link para o host; parado é um
- * botão que o sobe; o desta janela é um botão que só abre o painel. O painel abre no hover e no foco e
- * é `fixed`: assim ele não é recortado quando a coluna rola, e continua filho do tile na ordem do DOM,
- * que é o que deixa o teclado chegar aos botões dele.
+ * O botão da animação do splash, no pé do rail: o ícone diz o estado (interruptor à direita = ligado) e o
+ * clique faz o contrário, que é reversível e por isso não pergunta nada. O estado vem da leitura da coluna
+ * (`listar`), nunca de uma variável daqui: a extensão recarrega a quente, e o arquivo pode ter mudado por
+ * fora. Uma recusa — JSON inválido, arquivo sem permissão — vira `!` com o motivo no `title`, porque
+ * quando ela recusa ela **não escreve nada**.
  */
-function Tile({ projeto, onChanged }: { projeto: Projeto; onChanged: () => Promise<unknown> }) {
+function BotaDoSplash({
+  splash,
+  onChanged,
+}: {
+  splash: boolean | undefined
+  onChanged: () => Promise<unknown>
+}) {
+  const [pendente, setPendente] = useState(false)
+  const [erro, setErro] = useState<string>()
+  const alternar = async () => {
+    if (pendente || splash === undefined) return
+    setErro(undefined)
+    setPendente(true)
+    try {
+      await api.action(SplashAction, { enabled: !splash })
+      await onChanged()
+    } catch (causa) {
+      setErro(errorMessage(causa))
+    } finally {
+      setPendente(false)
+    }
+  }
+  const rotulo = rotuloDoSplash(splash)
+  if (erro)
+    return (
+      <Icone
+        className="size-6"
+        label={`${rotulo} (${erro})`}
+        onClick={() => void alternar()}
+        title={`${erro} — click to try again`}
+      >
+        <span className="font-mono text-[11px] text-error">!</span>
+      </Icone>
+    )
+  return (
+    <Icone
+      className="size-6"
+      disabled={splash === undefined || pendente}
+      label={rotulo}
+      onClick={() => void alternar()}
+      title={rotulo}
+    >
+      {pendente ? (
+        <LoaderCircleIcon className="size-3 animate-spin" />
+      ) : splash ? (
+        <ToggleRightIcon className="size-4" />
+      ) : (
+        <ToggleLeftIcon className="size-4" />
+      )}
+    </Icone>
+  )
+}
+
+/**
+ * Um projeto no rail: 32px de iniciais, com o ponto de presença no canto e o número de perguntas quando há
+ * alguma. De pé e fora desta janela é um link para o host; parado é um botão que o sobe; o desta janela é
+ * um botão que só abre o painel. O painel abre no hover e no foco e é `fixed`: assim ele não é recortado
+ * quando a coluna rola, e continua filho do tile na ordem do DOM, que é o que deixa o teclado chegar aos
+ * botões dele.
+ */
+function Tile({
+  projeto,
+  medida,
+  onChanged,
+  onMedida,
+}: {
+  projeto: Projeto
+  /** A última medida da onda do rail, ou a que o painel deste tile fez (a do painel vence). */
+  medida?: Medida
+  onChanged: () => Promise<unknown>
+  onMedida: (name: string, medida: Medida) => void
+}) {
   const { copied, copy } = useCopy()
   const [aberto, setAberto] = useState(false)
   const [ancora, setAncora] = useState<CSSProperties>()
   const [pendente, setPendente] = useState<'start' | 'stop'>()
   const [confirmar, setConfirmar] = useState<{ pid: number; url?: string }>()
   const [erro, setErro] = useState<string>()
-  const [medida, setMedida] = useState<Medida>()
   const [medindo, setMedindo] = useState(false)
   const quadro = useRef<HTMLDivElement>(null)
   // Fechar espera um instante: o ponteiro que atravessa o vão até o painel não o fecha no caminho.
@@ -196,29 +334,32 @@ function Tile({ projeto, onChanged }: { projeto: Projeto; onChanged: () => Promi
   const link = linkDo(projeto)
   const estado =
     pendente === 'start' ? 'starting' : pendente === 'stop' ? 'stopping' : palavra(projeto)
+  const ponto = presenca(projeto, medida)
+  const perguntasAbertas = numeroDePerguntas(medida?.perguntasAbertas)
+  const hora = medida ? formatTime(medida.at) : undefined
+  const tituloDoBotao = tituloDoTile(projeto, medida, hora)
 
-  // O que se disse de um estado não vale para o outro: uma medida nova apaga o aviso e a pergunta.
+  // O que se disse de um estado não vale para o outro: uma ação nova apaga o aviso e a pergunta.
   useEffect(() => {
     setErro(undefined)
     setConfirmar(undefined)
-    setMedida(undefined)
   }, [depe])
 
-  // A medida é do instante em que o painel abre — e o painel diz a hora dela. Fechado, não se mede nada.
+  // A medida é do instante em que o painel abre — e o painel diz a hora dela. Fechado, não se mede
+  // nada: o tile fica com a medida da onda do rail, que é de quando ela foi feita.
   useEffect(() => {
     if (!aberto || !depe) return undefined
     let vivo = true
-    setMedida(undefined)
     setMedindo(true)
     api
       .action(MedirAction, { name: projeto.name })
       .then((resultado) => {
-        if (vivo) setMedida(resultado)
+        if (vivo) onMedida(projeto.name, resultado)
       })
       .catch((causa: unknown) => {
         // O painel não inventa um número: o que falhou vira `unavailable` com o motivo.
         if (vivo)
-          setMedida({
+          onMedida(projeto.name, {
             working: null,
             perguntasAbertas: null,
             motivo: errorMessage(causa),
@@ -231,7 +372,7 @@ function Tile({ projeto, onChanged }: { projeto: Projeto; onChanged: () => Promi
     return () => {
       vivo = false
     }
-  }, [aberto, depe, projeto.name])
+  }, [aberto, depe, projeto.name, onMedida])
 
   /** Abre o painel ao lado do tile: à direita, e para cima quando o tile está na metade de baixo. */
   const abrir = () => {
@@ -316,7 +457,7 @@ function Tile({ projeto, onChanged }: { projeto: Projeto; onChanged: () => Promi
 
   const letras = iniciais(projeto.name)
   const aparencia = cn(
-    'flex size-8 items-center justify-center rounded-md border font-mono text-[10.5px] font-medium uppercase tabular-nums outline-none transition-colors focus-visible:ring-1 focus-visible:ring-ring',
+    'relative flex size-8 items-center justify-center rounded-md border font-mono text-[10.5px] font-medium uppercase tabular-nums outline-none transition-colors focus-visible:ring-1 focus-visible:ring-ring',
     projeto.current
       ? 'border-brand/40 bg-brand/10 text-brand'
       : depe
@@ -326,12 +467,9 @@ function Tile({ projeto, onChanged }: { projeto: Projeto; onChanged: () => Promi
     // clique que não deu certo não pode sumir em silêncio.
     erro && 'ring-1 ring-error/60',
   )
-  const rotulo = projeto.current
-    ? `${projeto.name} — this window`
-    : depe
-      ? `Open ${projeto.name} in this tab`
-      : `Start ${projeto.name}`
-  const dica = erro ?? (projeto.current ? `${projeto.root} — this window` : undefined)
+  // O `title` e o `aria-label` dizem a frase inteira — estado, contas e a hora da medida. O erro de uma
+  // ação vence a frase: o clique que falhou não pode sumir.
+  const titulo = erro ?? tituloDoBotao
   const conteudo = pendente === 'start' ? <LoaderCircleIcon className="size-3.5 animate-spin" /> : letras
 
   return (
@@ -350,34 +488,32 @@ function Tile({ projeto, onChanged }: { projeto: Projeto; onChanged: () => Promi
       {projeto.current ? (
         <button
           aria-current="page"
-          aria-label={rotulo}
+          aria-label={titulo}
           className={aparencia}
           onClick={abrir}
-          title={dica ?? `${projeto.root} — this window`}
+          title={titulo}
           type="button"
         >
           {conteudo}
+          <Sinais perguntas={perguntasAbertas} ponto={ponto} />
         </button>
       ) : depe && link ? (
-        <a
-          aria-label={rotulo}
-          className={aparencia}
-          href={link}
-          title={dica ?? `${projeto.name} — open it in this tab`}
-        >
+        <a aria-label={titulo} className={aparencia} href={link} title={titulo}>
           {conteudo}
+          <Sinais perguntas={perguntasAbertas} ponto={ponto} />
         </a>
       ) : (
         <button
           aria-busy={pendente === 'start' || undefined}
-          aria-label={rotulo}
+          aria-label={titulo}
           className={aparencia}
           disabled={pendente === 'start'}
           onClick={(evento) => void iniciar(evento)}
-          title={dica ?? `${projeto.name} — stopped, click to start it`}
+          title={titulo}
           type="button"
         >
           {conteudo}
+          <Sinais perguntas={perguntasAbertas} ponto={ponto} />
         </button>
       )}
       {aberto && ancora && (
@@ -496,6 +632,40 @@ function Tile({ projeto, onChanged }: { projeto: Projeto; onChanged: () => Promi
 }
 
 /**
+ * Os dois indicadores do canto do tile, com a semântica e as classes do mark do app (`AgentMark`): o
+ * ponto de presença — pulsando enquanto trabalha, verde ocioso, cinza parado, vazado quando o host não
+ * respondeu — e, quando há pergunta sem resposta, o número em âmbar no canto de cima. O texto inteiro
+ * está no `title`/`aria-label` do tile; aqui nada é lido por leitor de tela.
+ */
+function Sinais({ ponto, perguntas }: { ponto: Presenca; perguntas: string | undefined }) {
+  return (
+    <>
+      <span
+        aria-hidden="true"
+        className={cn(
+          'absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full ring-[1.5px] ring-sidebar',
+          ponto === 'working' && 'animate-pulse-dot bg-brand',
+          ponto === 'idle' && 'bg-success',
+          ponto === 'stopped' && 'bg-muted-foreground/60',
+          // Sem resposta não é ocioso: o ponto fica vazado, sem pulso e sem cor de trabalho.
+          ponto === 'unavailable' && 'bg-transparent ring-muted-foreground/50',
+        )}
+        data-presence={ponto}
+      />
+      {perguntas && (
+        <span
+          aria-hidden="true"
+          className="absolute -top-0.5 -right-0.5 flex h-3 min-w-3 items-center justify-center rounded-full bg-amber-400 px-0.5 font-mono text-[8px] leading-none font-medium tabular-nums text-amber-950 ring-[1.5px] ring-sidebar"
+          data-questions={perguntas}
+        >
+          {perguntas}
+        </span>
+      )}
+    </>
+  )
+}
+
+/**
  * O que se mediu no host, no painel: `1 working · 1 question`, com a hora da medida. Um host que não
  * respondeu mostra `unavailable` e o motivo — nunca um zero inventado, que é o que faria ignorar
  * justamente o projeto travado.
@@ -533,18 +703,20 @@ function PainelMedida({ medida, medindo }: { medida: Medida | undefined; medindo
   )
 }
 
-/** Um botão redondo do pé do rail: o de atualizar e o `+`. */
+/** Um botão redondo do pé do rail: o de atualizar, o `+` e o da animação do splash. */
 function Icone({
   label,
   title,
   onClick,
   className,
+  disabled,
   children,
 }: {
   label: string
   title: string
   onClick: () => void
   className?: string
+  disabled?: boolean
   children: ReactNode
 }) {
   return (
@@ -552,8 +724,10 @@ function Icone({
       aria-label={label}
       className={cn(
         'flex cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 outline-none hover:bg-accent/60 hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring',
+        disabled && 'pointer-events-none opacity-40',
         className,
       )}
+      disabled={disabled}
       onClick={onClick}
       title={title}
       type="button"

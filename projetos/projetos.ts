@@ -1,15 +1,16 @@
 /**
  * As contas puras do rail “Projetos”: as iniciais do tile, os dois grupos (rodando e parados), o
  * caminho que se digita no diálogo do `+`, o home central que um projeto novo vai ocupar, a porta que
- * só o popover mostra, e o que o botão de parar decide. Nada aqui lê a máquina, abre processo ou faz
- * requisição — `projetos.test.ts` cobre tudo com fixtures.
+ * só o popover mostra, o que o botão de parar decide, e o que o botão do splash escreve nas settings
+ * desta máquina. Nada aqui lê a máquina, abre processo ou faz requisição — `projetos.test.ts` cobre tudo
+ * com fixtures.
  *
  * O estado nunca é só a cor: o rail escreve `running`/`stopped` no popover de cada tile, o grupo é a
  * posição (rodando acima da linha, parados abaixo) e o que se mediu vem em número, com a hora.
  */
 import { createHash } from 'node:crypto'
 import { basename, isAbsolute, join, resolve } from 'node:path'
-import type { Projeto } from './tipos.ts'
+import type { Medida, Projeto, Secao } from './tipos.ts'
 
 /** A primeira porta que se tenta ao subir um host. */
 export const PRIMEIRA_PORTA = 4747
@@ -209,4 +210,144 @@ export function decisaoDeParada(
   if (!alvo) return { acao: 'nada' }
   if (registado === alvo.pid) return { acao: 'parar', pid: alvo.pid }
   return confirmar ? { acao: 'parar', pid: alvo.pid } : { acao: 'confirmar', pid: alvo.pid }
+}
+
+/**
+ * O ponto de presença do tile, no mesmo esquema do mark do app (`AgentMark`): trabalha (brand, pulsando),
+ * está de pé e ocioso (verde), está parado (cinza). Um host de pé que **não respondeu** não é ocioso:
+ * ele fica sem pulso e o tile diz `unavailable` — o silêncio de um host travado não é calma.
+ */
+export type Presenca = 'working' | 'idle' | 'stopped' | 'unavailable'
+
+/**
+ * O ponto de um tile, a partir do projeto e da última medida dele: parado não tem o que medir, e uma
+ * medida que não veio (`null` nos dois, com motivo) é `unavailable`, nunca `idle`. Uma medida com zero é
+ * medida: `0 working` é ocioso de verdade.
+ */
+export function presenca(projeto: Projeto, medida: Medida | undefined): Presenca {
+  if (projeto.running === undefined) return 'stopped'
+  // De pé e ainda sem leitura (a onda não voltou, ou o host subiu agora): não há o que afirmar.
+  if (!medida || !temMedida(medida.working, medida.perguntasAbertas)) return 'unavailable'
+  return (medido(medida.working) ?? 0) > 0 ? 'working' : 'idle'
+}
+
+/**
+ * O número do contador de perguntas, como cabe no canto do tile: `1`..`9`, `9+` de dez para cima, e
+ * `undefined` em zero — um contador de zero é ruído. O que não se mediu também não vira número.
+ */
+export function numeroDePerguntas(abertas: number | null | undefined): string | undefined {
+  const n = medido(abertas)
+  if (!n) return undefined
+  return n > 9 ? '9+' : String(n)
+}
+
+/**
+ * A frase inteira do tile, no `title` e no `aria-label`: o estado escrito, as contas da leitura **com a
+ * hora dela** (o indicador envelhece, mas não mente: ele diz de quando é) e o que o clique faz. `hora`
+ * chega já formatada — a conta não formata data.
+ */
+export function tituloDoTile(
+  projeto: Projeto,
+  medida: Medida | undefined,
+  hora: string | undefined,
+): string {
+  const clique = projeto.current
+    ? 'this window'
+    : projeto.running
+      ? 'open it in this tab'
+      : 'stopped, click to start it'
+  // Parado não tem leitura nenhuma: a frase é a de sempre, e o ponto cinza já diz o resto.
+  if (projeto.running === undefined) return `${projeto.name} — ${clique}`
+  const contas = !medida
+    ? 'not measured yet'
+    : temMedida(medida.working, medida.perguntasAbertas)
+      ? `${contagem(medida.working)} · ${tituloDasPerguntas(medida.perguntasAbertas)}`
+      : `counts unavailable${medida.motivo ? ` — ${medida.motivo}` : ''}`
+  const quando = medida && hora ? ` · measured at ${hora}` : ''
+  return `${projeto.name} — running · ${contas}${quando} — ${clique}`
+}
+
+/**
+ * A leitura completa da coluna, do jeito que cada tile a guarda: uma medida por projeto **de pé**, cada
+ * uma com a hora em que se mediu. Um projeto parado não ganha entrada — não há a quem perguntar.
+ */
+export function ondaDaLeitura(secao: Secao): Record<string, Medida> {
+  const medidas: Record<string, Medida> = {}
+  for (const projeto of secao.projetos) {
+    if (projeto.working === undefined && projeto.perguntasAbertas === undefined) continue
+    medidas[projeto.name] = {
+      working: medido(projeto.working) ?? null,
+      perguntasAbertas: medido(projeto.perguntasAbertas) ?? null,
+      ...(projeto.motivo ? { motivo: projeto.motivo } : {}),
+      at: secao.at,
+    }
+  }
+  return medidas
+}
+
+/**
+ * O arquivo de settings **desta máquina**, `<home do usuário>/.ultimate/settings.json` — a camada de quem
+ * usa, que vale em todo projeto. O `<projeto>/.ultimate/settings.json` é outro arquivo, e esta extensão
+ * nunca o toca: um projeto pode desligar ou ligar o splash por cima disso, e essa é a decisão dele.
+ */
+export function settingsDoUsuario(userHome: string): string {
+  return join(userHome, '.ultimate', 'settings.json')
+}
+
+/**
+ * O splash está ligado nestas settings? `splash` em `extensions.disable` desliga; o arquivo ausente, uma
+ * `disable` que não é lista ou um JSON torto contam como **ligado**, porque é o que o core faz com eles
+ * (um arquivo que não se lê inteiro não desliga extensão nenhuma). É a camada do usuário que se lê aqui.
+ */
+export function splashLigado(settings: unknown): boolean {
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return true
+  const extensions = (settings as Record<string, unknown>).extensions
+  if (!extensions || typeof extensions !== 'object' || Array.isArray(extensions)) return true
+  const disable = (extensions as Record<string, unknown>).disable
+  return !(Array.isArray(disable) && disable.includes('splash'))
+}
+
+/**
+ * As mesmas settings com o splash ligado ou desligado: `splash` sai de `extensions.disable` (ligar) ou
+ * entra **uma vez** (desligar), e todo o resto do arquivo fica como está — as chaves que esta extensão
+ * não conhece inclusive (`modelFamilies`, `lander`, o que houver). `extensions.enable` não é tocado:
+ * `disable` vence `enable` na mesma camada, então desligar funciona mesmo com `splash` lá.
+ *
+ * Nada que o core recusaria inteiro passa daqui: o valor que não é um objeto, um `extensions` que não é
+ * objeto e uma `disable` que não é lista de nomes lançam, e quem chamou não escreve nada. O objeto
+ * devolvido é **o mesmo** que veio quando não há o que mudar — quem escreve compara e não reescreve.
+ */
+export function ajustarSplash(settings: unknown, ligado: boolean): Record<string, unknown> {
+  const objeto = comoObjeto(settings, 'settings')
+  const extensions =
+    objeto.extensions === undefined ? undefined : comoObjeto(objeto.extensions, 'extensions')
+  const disable = extensions?.disable === undefined ? [] : comoNomes(extensions.disable)
+  // Já está como se pediu: nenhuma chave é reescrita à toa.
+  if (ligado === !disable.includes('splash')) return objeto
+  const semSplash = disable.filter((nome) => nome !== 'splash')
+  const proxima = ligado ? semSplash : [...semSplash, 'splash']
+  return { ...objeto, extensions: { ...extensions, disable: proxima } }
+}
+
+/**
+ * A frase do botão do pé do rail, que vai no `title` e no `aria-label`: o estado de agora e o que o
+ * clique faz com ele. Antes da primeira leitura o estado não se sabe, e o botão diz isso.
+ */
+export function rotuloDoSplash(ligado: boolean | undefined): string {
+  if (ligado === undefined) return 'Splash on project switch: unknown'
+  return `Splash on project switch: ${ligado ? 'on — turn it off' : 'off — turn it on'}`
+}
+
+/** Um objeto JSON — o que se pode reescrever preservando as chaves; qualquer outra coisa é recusada. */
+function comoObjeto(valor: unknown, campo: string): Record<string, unknown> {
+  if (!valor || typeof valor !== 'object' || Array.isArray(valor))
+    throw new Error(`${campo} must be a JSON object`)
+  return valor as Record<string, unknown>
+}
+
+/** Uma lista de nomes de extensão: uma lista com outra coisa dentro não é lista de nomes. */
+function comoNomes(valor: unknown): string[] {
+  if (!Array.isArray(valor) || valor.some((nome) => typeof nome !== 'string'))
+    throw new Error('extensions.disable must be an array of names')
+  return valor as string[]
 }

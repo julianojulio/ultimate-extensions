@@ -29,6 +29,16 @@ export interface Projeto {
 export interface Secao {
   projetos: Projeto[]
   at: string
+  /**
+   * A animação do splash como as settings **desta máquina** a deixam: é o que o botão do pé do rail diz
+   * e o contrário do que o clique dele pede. Lido na hora, a cada leitura — nunca guardado.
+   */
+  splash: boolean
+}
+
+/** O que a ação `splash` deixou: a animação ligada ou desligada nas settings desta máquina. */
+export interface Splash {
+  splash: boolean
 }
 
 /**
