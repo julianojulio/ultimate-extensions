@@ -1,31 +1,36 @@
 /**
- * As contas puras do rail “Projetos”: as iniciais do tile, os dois grupos (rodando e parados), o
- * caminho que se digita no diálogo do `+`, o home central que um projeto novo vai ocupar, a porta que
- * só o popover mostra, o que o botão de parar decide, e o que o botão do splash escreve nas settings
- * desta máquina. Nada aqui lê a máquina, abre processo ou faz requisição — `projetos.test.ts` cobre tudo
- * com fixtures.
+ * The pure calculations of the Projects rail: the initials of the tile, the two groups (running and
+ * stopped), the path typed into the `+` dialog, the central home a new project will occupy, the port
+ * that only the panel shows, what the stop button decides, and what the splash button writes to this
+ * machine's settings. Nothing here reads the machine, opens a process or makes a request —
+ * `projetos.test.ts` covers all of it with fixtures.
  *
- * O estado nunca é só a cor: o rail escreve `running`/`stopped` no popover de cada tile, o grupo é a
- * posição (rodando acima da linha, parados abaixo) e o que se mediu vem em número, com a hora.
+ * The state is never the colour alone: the rail writes `running`/`stopped` in each tile's panel, the
+ * group is the position (running above the line, stopped below) and what was measured comes as a
+ * number, with the time.
  */
 import { createHash } from 'node:crypto'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import type { Medida, Projeto, Secao } from './tipos.ts'
 
-/** A primeira porta que se tenta ao subir um host. */
+/** The first port tried when bringing a host up. */
 export const PRIMEIRA_PORTA = 4747
 
-/** Quantas portas se tentam a partir dela: passando disso não é falta de porta, é outra coisa. */
+/** How many ports are tried from there: beyond that it is not a missing port, it is something else. */
 export const TENTATIVAS_DE_PORTA = 100
 
-/** O estado do host, em palavra: o popover diz `running` ou `stopped`, porque num tile de 32px não cabe. */
+/**
+ * The state of the host, in a word: the panel says `running` or `stopped`, because it does not fit in a
+ * 32px tile.
+ */
 export function palavra(projeto: Projeto): 'running' | 'stopped' {
   return projeto.running ? 'running' : 'stopped'
 }
 
 /**
- * A porta, como o popover a mostra para diagnóstico: `:4747`, tirada da URL que o host publica. Uma
- * URL sem porta devolve nada — o popover fica sem número em vez de inventar um endereço.
+ * The port, as the panel shows it for diagnostics: `:4747`, taken from the URL the host publishes. A
+ * URL without a port returns nothing — the panel stays without a number instead of inventing an
+ * address.
  */
 export function portaDo(url: string | undefined): string | undefined {
   if (!url) return undefined
@@ -37,15 +42,15 @@ export function portaDo(url: string | undefined): string | undefined {
   }
 }
 
-/** Um número que se pode mostrar: inteiro, finito e não negativo. O resto não é medida. */
+/** A number that can be shown: whole, finite and not negative. The rest is not a measurement. */
 export function medido(valor: number | null | undefined): number | undefined {
   return typeof valor === 'number' && Number.isInteger(valor) && valor >= 0 ? valor : undefined
 }
 
 /**
- * Se há medida para mostrar. **Um zero é medida** — o bug que isto fixa é o de tratar `0` como ausência:
- * `0 working · 0 questions` é uma resposta; `null` (o host está de pé e não respondeu) e `undefined`
- * (o projeto está parado, ninguém perguntou) não são.
+ * Whether there is a measurement to show. **A zero is a measurement** — the bug this pins down is
+ * treating `0` as absence: `0 working · 0 questions` is an answer; `null` (the host is up and did not
+ * answer) and `undefined` (the project is stopped, nobody asked) are not.
  */
 export function temMedida(
   working: number | null | undefined,
@@ -54,14 +59,17 @@ export function temMedida(
   return medido(working) !== undefined || medido(abertas) !== undefined
 }
 
-/** Se o projeto tem host para parar: de pé, e não o desta janela (quem serve a tela não se desliga nela). */
+/**
+ * Whether the project has a host to stop: running, and not this window's (what serves the screen is not
+ * shut down from it).
+ */
 export function podeParar(projeto: Projeto): boolean {
   return projeto.running !== undefined && !projeto.current
 }
 
 /**
- * Quantas conversas estão trabalhando agora: `0 working`, `2 working`. Um número que não se mediu não
- * vira zero — vira `count unavailable`.
+ * How many conversations are working now: `0 working`, `2 working`. A number that was not measured does
+ * not become zero — it becomes `count unavailable`.
  */
 export function contagem(working: number | null | undefined): string {
   const n = medido(working)
@@ -69,8 +77,9 @@ export function contagem(working: number | null | undefined): string {
 }
 
 /**
- * As perguntas do painel sem resposta, com o número à frente: `0 questions`, `1 question`. Sem medida,
- * `questions unavailable` — nunca um zero inventado, que é o que faria ignorar o projeto travado.
+ * The panel's questions without an answer, with the number in front: `0 questions`, `1 question`. Not
+ * measured, `questions unavailable` — never an invented zero, which is what would make one ignore the
+ * stuck project.
  */
 export function perguntas(abertas: number | null | undefined): string {
   const n = medido(abertas)
@@ -79,8 +88,8 @@ export function perguntas(abertas: number | null | undefined): string {
 }
 
 /**
- * A frase inteira do contador, que fica no `title` da linha: `2 unanswered questions`. Sem medida, a
- * frase diz que não se mediu e por quê.
+ * The whole sentence of the counter, which sits in the row's `title`: `2 unanswered questions`. Not
+ * measured, the sentence says that nothing was measured and why.
  */
 export function tituloDasPerguntas(abertas: number | null | undefined, motivo?: string): string {
   const n = medido(abertas)
@@ -89,17 +98,17 @@ export function tituloDasPerguntas(abertas: number | null | undefined, motivo?: 
 }
 
 /**
- * O alvo do clique de um tile: a URL do host, com a porta, para onde o navegador vai. O número não
- * entra em rótulo nenhum (`iniciais` só tem letras): ele é endereço, não informação da tela.
+ * The click target of a tile: the host's URL, with the port, where the browser goes. The number enters
+ * no label (`iniciais` has letters only): it is an address, not on-screen information.
  */
 export function linkDo(projeto: Projeto): string | undefined {
   return projeto.running?.url
 }
 
 /**
- * As iniciais do tile, em até duas letras: `app_evangelho` → `AE`, `gta2xlwifi-lineage` → `GL`,
- * `robsoncosta` → `RO`. Duas palavras dão a primeira letra de cada uma; uma só palavra dá as duas
- * primeiras letras. Dois projetos podem coincidir nas iniciais — o popover diz o nome e o caminho.
+ * The initials of the tile, in up to two letters: `app_evangelho` → `AE`, `gta2xlwifi-lineage` → `GL`,
+ * `robsoncosta` → `RO`. Two words give the first letter of each one; a single word gives its first two
+ * letters. Two projects can coincide in their initials — the panel gives the name and the path.
  */
 export function iniciais(name: string): string {
   const partes = name.split(/[^\p{L}\p{N}]+/u).filter(Boolean)
@@ -110,15 +119,15 @@ export function iniciais(name: string): string {
   return letras.join('').toUpperCase()
 }
 
-/** O rail dividido pelo que ele mostra: os hosts de pé em cima, os parados embaixo. */
+/** The rail split by what it shows: the running hosts on top, the stopped ones below. */
 export interface Grupos {
   rodando: Projeto[]
   parados: Projeto[]
 }
 
 /**
- * Os dois grupos do rail, na ordem em que ele os desenha: o projeto desta janela primeiro entre os que
- * rodam, o resto por nome — a mesma ordem em cada abertura, para um tile não pular de lugar.
+ * The two groups of the rail, in the order it draws them: this window's project first among the running
+ * ones, the rest by name — the same order on every open, so that a tile does not jump around.
  */
 export function grupos(projetos: Projeto[]): Grupos {
   const porNome = (a: Projeto, b: Projeto) => a.name.localeCompare(b.name)
@@ -130,9 +139,9 @@ export function grupos(projetos: Projeto[]): Grupos {
 }
 
 /**
- * O caminho que se digitou no diálogo do `+`, em absoluto: `~` vira o home de quem usa, `~/x` vira
- * `<home>/x`, e o resto é resolvido contra o diretório corrente. Vazio ou relativo ao acaso devolve
- * `undefined` — o diálogo pede um caminho em vez de adivinhar uma pasta.
+ * The path typed into the `+` dialog, made absolute: `~` becomes the home of whoever is using it, `~/x`
+ * becomes `<home>/x`, and the rest is resolved against the current directory. Empty or accidentally
+ * relative returns `undefined` — the dialog asks for a path instead of guessing a folder.
  */
 export function caminhoAbsoluto(valor: string, home: string): string | undefined {
   const texto = valor.trim()
@@ -143,40 +152,41 @@ export function caminhoAbsoluto(valor: string, home: string): string | undefined
 }
 
 /**
- * O home central de um projeto novo, `<home>/.ultimate/projects/<nome>-<8 hex do sha256 do caminho>`.
- * É o mesmo cálculo de `server/project.ts:projectHome`; um projeto novo não se registra à mão — o host
- * que roda naquela pasta nasce com este home, e é por isso que o tile aparece sozinho.
+ * The central home of a new project, `<home>/.ultimate/projects/<name>-<8 hex of the path's sha256>`.
+ * It is the same calculation as `server/project.ts:projectHome`; a new project does not register itself
+ * by hand — the host running in that folder is born with this home, and that is why the tile appears
+ * on its own.
  */
 export function homeDoProjeto(root: string, home: string): string {
   const hash = createHash('sha256').update(root).digest('hex').slice(0, 8)
   return join(home, '.ultimate', 'projects', `${basename(root)}-${hash}`)
 }
 
-/** O comando que sobe o projeto à mão, no popover de qualquer projeto: `ultimate <caminho>`. */
+/** The command that brings the project up by hand, in any project's panel: `ultimate <path>`. */
 export function comando(root: string | undefined): string | undefined {
   if (!root) return undefined
   return `ultimate ${palavraDeShell(root)}`
 }
 
-/** Um caminho que o shell não partiria fica como está; qualquer outro vai entre aspas simples. */
+/** A path the shell would not split stays as it is; any other goes between single quotes. */
 function palavraDeShell(valor: string): string {
   return /^[\w@%+=:,./-]+$/.test(valor) ? valor : `'${valor.replaceAll("'", `'\\''`)}'`
 }
 
-/** O `argv` com que esta extensão sobe um host: o projeto, a porta escolhida, e sem abrir janela. */
+/** The `argv` with which this extension brings a host up: the project, the chosen port, and no window. */
 export function argumentosDeInicio(root: string, port: number): string[] {
   return [root, '--port', String(port), '--no-open']
 }
 
-/** O programa que se roda: o `bin/ultimate.ts` do clone que serve esta janela. */
+/** The program that is run: the `bin/ultimate.ts` of the clone that serves this window. */
 export function programaDeInicio(ultimateRoot: string): string {
   return join(ultimateRoot, 'bin', 'ultimate.ts')
 }
 
 /**
- * A primeira porta livre a partir de `primeira`, decidida por quem sabe ouvir (`livre` tenta abrir a
- * porta em loopback). Sem porta livre no intervalo, falha nomeando o intervalo — a linha mostra o erro
- * em vez de um link que não atende.
+ * The first free port from `primeira`, decided by whoever knows how to listen (`livre` tries to open the
+ * port on loopback). With no free port in the range, it fails naming the range — the row shows the
+ * error instead of a link that does not answer.
  */
 export async function escolherPorta(
   livre: (port: number) => Promise<boolean> | boolean,
@@ -188,19 +198,22 @@ export async function escolherPorta(
   throw new Error(`No free port from ${primeira} (${tentativas} tried)`)
 }
 
-/** O host de um projeto como o lock o descreve: `pid` é o do supervisor, que é quem escreve o lock. */
+/**
+ * A project's host as the lock describes it: `pid` is the supervisor's, since the supervisor is the one
+ * that writes the lock.
+ */
 export type Alvo = { pid: number; url?: string }
 
-/** O que o botão de parar decide fazer. */
+/** What the stop button decides to do. */
 export type Parada =
   | { acao: 'nada' }
   | { acao: 'confirmar'; pid: number }
   | { acao: 'parar'; pid: number }
 
 /**
- * O que o botão de parar faz, a partir do lock **relido**: um projeto sem host vivo não tem o que
- * parar; um host que esta extensão subiu (o pid que ela gravou) para direto; o de qualquer outro pede
- * confirmação — matar processo alheio a um clique cego não é o que este botão promete.
+ * What the stop button does, from the **re-read** lock: a project without a live host has nothing to
+ * stop; a host this extension started (the pid it recorded) stops straight away; anyone else's asks for
+ * confirmation — killing someone else's process on a blind click is not what this button promises.
  */
 export function decisaoDeParada(
   alvo: Alvo | undefined,
@@ -213,27 +226,29 @@ export function decisaoDeParada(
 }
 
 /**
- * O ponto de presença do tile, no mesmo esquema do mark do app (`AgentMark`): trabalha (brand, pulsando),
- * está de pé e ocioso (verde), está parado (cinza). Um host de pé que **não respondeu** não é ocioso:
- * ele fica sem pulso e o tile diz `unavailable` — o silêncio de um host travado não é calma.
+ * The presence dot of the tile, in the same scheme as the app's mark (`AgentMark`): working (brand,
+ * pulsing), up and idle (green), stopped (grey). A host that is up and **did not answer** is not idle:
+ * it stays without a pulse and the tile says `unavailable` — the silence of a stuck host is not calm.
  */
 export type Presenca = 'working' | 'idle' | 'stopped' | 'unavailable'
 
 /**
- * O ponto de um tile, a partir do projeto e da última medida dele: parado não tem o que medir, e uma
- * medida que não veio (`null` nos dois, com motivo) é `unavailable`, nunca `idle`. Uma medida com zero é
- * medida: `0 working` é ocioso de verdade.
+ * The dot of a tile, from the project and its last measurement: stopped has nothing to measure, and a
+ * measurement that did not come (`null` on both, with a reason) is `unavailable`, never `idle`. A
+ * measurement with zero is a measurement: `0 working` is idle for real.
  */
 export function presenca(projeto: Projeto, medida: Medida | undefined): Presenca {
   if (projeto.running === undefined) return 'stopped'
-  // De pé e ainda sem leitura (a onda não voltou, ou o host subiu agora): não há o que afirmar.
+  // Up and with no reading yet (the wave did not come back, or the host has just come up): there is
+  // nothing to assert.
   if (!medida || !temMedida(medida.working, medida.perguntasAbertas)) return 'unavailable'
   return (medido(medida.working) ?? 0) > 0 ? 'working' : 'idle'
 }
 
 /**
- * O número do contador de perguntas, como cabe no canto do tile: `1`..`9`, `9+` de dez para cima, e
- * `undefined` em zero — um contador de zero é ruído. O que não se mediu também não vira número.
+ * The number of the question counter, as it fits in the corner of the tile: `1`..`9`, `9+` from ten up,
+ * and `undefined` at zero — a counter of zero is noise. What was not measured does not become a number
+ * either.
  */
 export function numeroDePerguntas(abertas: number | null | undefined): string | undefined {
   const n = medido(abertas)
@@ -242,9 +257,10 @@ export function numeroDePerguntas(abertas: number | null | undefined): string | 
 }
 
 /**
- * A frase inteira do tile, no `title` e no `aria-label`: o estado escrito, as contas da leitura **com a
- * hora dela** (o indicador envelhece, mas não mente: ele diz de quando é) e o que o clique faz. `hora`
- * chega já formatada — a conta não formata data.
+ * The whole sentence of the tile, in the `title` and the `aria-label`: the state written out, the counts
+ * of the reading **with the time they are from** (the indicator ages, but does not lie: it says when it
+ * is from) and what the click does. `hora` arrives already formatted — the calculation does not format
+ * dates.
  */
 export function tituloDoTile(
   projeto: Projeto,
@@ -256,7 +272,7 @@ export function tituloDoTile(
     : projeto.running
       ? 'open it in this tab'
       : 'stopped, click to start it'
-  // Parado não tem leitura nenhuma: a frase é a de sempre, e o ponto cinza já diz o resto.
+  // Stopped has no reading at all: the sentence is the usual one, and the grey dot already says the rest.
   if (projeto.running === undefined) return `${projeto.name} — ${clique}`
   const contas = !medida
     ? 'not measured yet'
@@ -268,8 +284,8 @@ export function tituloDoTile(
 }
 
 /**
- * A leitura completa da coluna, do jeito que cada tile a guarda: uma medida por projeto **de pé**, cada
- * uma com a hora em que se mediu. Um projeto parado não ganha entrada — não há a quem perguntar.
+ * The whole reading of the column, the way each tile keeps it: one measurement per project **that is
+ * up**, each with the time it was measured at. A stopped project gets no entry — there is nobody to ask.
  */
 export function ondaDaLeitura(secao: Secao): Record<string, Medida> {
   const medidas: Record<string, Medida> = {}
@@ -286,18 +302,20 @@ export function ondaDaLeitura(secao: Secao): Record<string, Medida> {
 }
 
 /**
- * O arquivo de settings **desta máquina**, `<home do usuário>/.ultimate/settings.json` — a camada de quem
- * usa, que vale em todo projeto. O `<projeto>/.ultimate/settings.json` é outro arquivo, e esta extensão
- * nunca o toca: um projeto pode desligar ou ligar o splash por cima disso, e essa é a decisão dele.
+ * **This machine's** settings file, `<user home>/.ultimate/settings.json` — the layer of whoever is using
+ * it, which applies to every project. The `<project>/.ultimate/settings.json` is another file, and this
+ * extension never touches it: a project can turn the splash off or on on top of it, and that is its
+ * decision.
  */
 export function settingsDoUsuario(userHome: string): string {
   return join(userHome, '.ultimate', 'settings.json')
 }
 
 /**
- * O splash está ligado nestas settings? `splash` em `extensions.disable` desliga; o arquivo ausente, uma
- * `disable` que não é lista ou um JSON torto contam como **ligado**, porque é o que o core faz com eles
- * (um arquivo que não se lê inteiro não desliga extensão nenhuma). É a camada do usuário que se lê aqui.
+ * Is the splash on in these settings? `splash` in `extensions.disable` turns it off; a missing file, a
+ * `disable` that is not a list or broken JSON count as **on**, because that is what the core does with
+ * them (a file that is not read whole does not turn any extension off). It is the user's layer that is
+ * read here.
  */
 export function splashLigado(settings: unknown): boolean {
   if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return true
@@ -308,21 +326,23 @@ export function splashLigado(settings: unknown): boolean {
 }
 
 /**
- * As mesmas settings com o splash ligado ou desligado: `splash` sai de `extensions.disable` (ligar) ou
- * entra **uma vez** (desligar), e todo o resto do arquivo fica como está — as chaves que esta extensão
- * não conhece inclusive (`modelFamilies`, `lander`, o que houver). `extensions.enable` não é tocado:
- * `disable` vence `enable` na mesma camada, então desligar funciona mesmo com `splash` lá.
+ * The same settings with the splash on or off: `splash` leaves `extensions.disable` (turning on) or
+ * enters **once** (turning off), and all the rest of the file stays as it is — the keys this extension
+ * does not know included (`modelFamilies`, `lander`, whatever there is). `extensions.enable` is not
+ * touched: `disable` wins over `enable` in the same layer, so turning it off works even with `splash`
+ * there.
  *
- * Nada que o core recusaria inteiro passa daqui: o valor que não é um objeto, um `extensions` que não é
- * objeto e uma `disable` que não é lista de nomes lançam, e quem chamou não escreve nada. O objeto
- * devolvido é **o mesmo** que veio quando não há o que mudar — quem escreve compara e não reescreve.
+ * Nothing the core would refuse whole gets past here: a value that is not an object, an `extensions`
+ * that is not an object and a `disable` that is not a list of names throw, and whoever called writes
+ * nothing. The object returned is **the same** one that came in when there is nothing to change —
+ * whoever writes compares and does not write again.
  */
 export function ajustarSplash(settings: unknown, ligado: boolean): Record<string, unknown> {
   const objeto = comoObjeto(settings, 'settings')
   const extensions =
     objeto.extensions === undefined ? undefined : comoObjeto(objeto.extensions, 'extensions')
   const disable = extensions?.disable === undefined ? [] : comoNomes(extensions.disable)
-  // Já está como se pediu: nenhuma chave é reescrita à toa.
+  // It is already as asked: no key is rewritten for nothing.
   if (ligado === !disable.includes('splash')) return objeto
   const semSplash = disable.filter((nome) => nome !== 'splash')
   const proxima = ligado ? semSplash : [...semSplash, 'splash']
@@ -330,22 +350,23 @@ export function ajustarSplash(settings: unknown, ligado: boolean): Record<string
 }
 
 /**
- * A frase do botão do pé do rail, que vai no `title` e no `aria-label`: o estado de agora e o que o
- * clique faz com ele. Antes da primeira leitura o estado não se sabe, e o botão diz isso.
+ * The sentence of the button at the bottom of the rail, which goes in the `title` and the `aria-label`:
+ * the state now and what the click does with it. Before the first reading the state is not known, and
+ * the button says so.
  */
 export function rotuloDoSplash(ligado: boolean | undefined): string {
   if (ligado === undefined) return 'Splash on project switch: unknown'
   return `Splash on project switch: ${ligado ? 'on — turn it off' : 'off — turn it on'}`
 }
 
-/** Um objeto JSON — o que se pode reescrever preservando as chaves; qualquer outra coisa é recusada. */
+/** A JSON object — what can be rewritten preserving the keys; anything else is refused. */
 function comoObjeto(valor: unknown, campo: string): Record<string, unknown> {
   if (!valor || typeof valor !== 'object' || Array.isArray(valor))
     throw new Error(`${campo} must be a JSON object`)
   return valor as Record<string, unknown>
 }
 
-/** Uma lista de nomes de extensão: uma lista com outra coisa dentro não é lista de nomes. */
+/** A list of extension names: a list with something else inside it is not a list of names. */
 function comoNomes(valor: unknown): string[] {
   if (!Array.isArray(valor) || valor.some((nome) => typeof nome !== 'string'))
     throw new Error('extensions.disable must be an array of names')

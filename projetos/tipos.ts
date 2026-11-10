@@ -1,50 +1,58 @@
 /**
- * O que as ações devolvem e o que o rail desenha: nada aqui é estado guardado — a leitura é feita na
- * hora e a tela só mostra o que veio.
+ * What the actions return and what the rail draws: nothing here is stored state — the reading is made
+ * on the spot and the screen only shows what came.
  */
 
-/** Um projeto da máquina, como o rail o mostra. */
+/** A project of the machine, as the rail shows it. */
 export interface Projeto {
   name: string
-  /** O caminho completo, que vai no popover do tile. */
+  /** The full path, which goes in the tile's panel. */
   root: string
-  /** O projeto desta janela. */
+  /** The project of this window. */
   current: boolean
-  /** De pé: o pid e a URL que o host publica no lock dele. A URL é o alvo do clique do tile. */
+  /**
+   * Running: the pid and the URL the host publishes in its lock. The URL is the click target of the
+   * tile.
+   */
   running?: { pid: number; url: string }
   /**
-   * Conversas trabalhando agora. `undefined` quando a medida não foi pedida (`listar` do rail) ou o
-   * host está parado, e `null` quando ele está de pé e não respondeu — os casos dizem coisas diferentes.
+   * Conversations working now. `undefined` when the measurement was not asked for (the rail's
+   * `listar`) or the host is stopped, and `null` when it is up and did not answer — the cases say
+   * different things.
    */
   working?: number | null
-  /** Perguntas do painel sem resposta naquele host, com a mesma regra do `working`. */
+  /** Questions of the panel without an answer in that host, with the same rule as `working`. */
   perguntasAbertas?: number | null
-  /** Por que não respondeu; vai no popover, não no tile. */
+  /** Why it did not answer; it goes in the panel, not on the tile. */
   motivo?: string
-  /** `ultimate <caminho>`, o comando que sobe o projeto à mão. Mostrado e copiado, nunca executado. */
+  /**
+   * `ultimate <path>`, the command that brings the project up by hand. Shown and copied, never
+   * executed.
+   */
   comando?: string
 }
 
-/** A lista inteira e quando ela foi lida: o rail mostra a hora no popover do botão de atualizar. */
+/** The whole list and when it was read: the rail shows the time in the refresh button's panel. */
 export interface Secao {
   projetos: Projeto[]
   at: string
   /**
-   * A animação do splash como as settings **desta máquina** a deixam: é o que o botão do pé do rail diz
-   * e o contrário do que o clique dele pede. Lido na hora, a cada leitura — nunca guardado.
+   * The splash animation as **this machine's** settings leave it: it is what the button at the bottom
+   * of the rail says and the opposite of what its click asks for. Read on the spot, on every reading —
+   * never stored.
    */
   splash: boolean
 }
 
-/** O que a ação `splash` deixou: a animação ligada ou desligada nas settings desta máquina. */
+/** What the `splash` action left: the animation on or off in this machine's settings. */
 export interface Splash {
   splash: boolean
 }
 
 /**
- * O que se mediu num projeto quando o popover dele abriu: as conversas trabalhando, as perguntas sem
- * resposta, a hora da medida, e o motivo quando o host não respondeu — nunca um zero no lugar do
- * silêncio.
+ * What was measured in a project when its panel opened: the conversations working, the questions
+ * without an answer, the time of the measurement, and the reason when the host did not answer — never
+ * a zero in place of the silence.
  */
 export interface Medida {
   working: number | null
@@ -53,17 +61,18 @@ export interface Medida {
   at: string
 }
 
-/** O que um host responde de si mesmo, quando outro host da máquina pergunta. */
+/** What a host answers about itself, when another host of the machine asks. */
 export interface Estado {
   working: number
-  /** Perguntas sem resposta neste host; `null` quando nem isso se mediu. */
+  /** Questions without an answer in this host; `null` when not even that was measured. */
   perguntasAbertas: number | null
   at: string
 }
 
 /**
- * O que a ação `criar` fez: subiu um host para uma pasta nova (`criado: true`) ou selecionou o projeto
- * que já era aquela pasta — de pé, ou subindo agora —, sem um segundo host para a mesma raiz.
+ * What the `criar` action did: it brought a host up for a new folder (`criado: true`) or selected
+ * the project that was already that folder — up, or coming up now —, without a second host for the
+ * same root.
  */
 export interface ResultadoDaCriacao {
   criado: boolean
@@ -71,8 +80,8 @@ export interface ResultadoDaCriacao {
 }
 
 /**
- * O que a ação `parar` fez: parou (e devolve a linha nova), ou ainda pede confirmação porque aquele
- * host não foi esta extensão que subiu.
+ * What the `parar` action did: it stopped (and returns the new row), or it still asks for
+ * confirmation because that host was not started by this extension.
  */
 export type ResultadoDaParada =
   | { parado: true; projeto: Projeto }

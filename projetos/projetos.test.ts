@@ -1,28 +1,33 @@
 /**
- * As contas puras do rail “Projetos” contra fixtures: nenhum teste aqui lê a máquina, abre processo
- * ou faz requisição — são as funções de `projetos.ts` e o que o rail promete mostrar.
+ * The pure calculations of the Projects rail against fixtures: no test here reads the machine, opens
+ * a process or makes a request — they are the functions of `projetos.ts` and what the rail promises to
+ * show.
  *
- * O que importa fixar:
+ * What matters to pin down:
  *
- * - o estado vem escrito, não só na cor: `running` e `stopped` são palavras no popover do tile, e o
- *   grupo é a posição no rail;
- * - o tile não mostra porta: o rótulo é só letras (`iniciais`), e a porta vive no href do link;
- * - a contagem e o contador de perguntas vêm de um número medido: sem medida não é `0`, é
- *   `unavailable` — o zero inventado é o pior erro possível, porque faz ignorar o projeto travado;
- * - o host se sobe na primeira porta livre a partir de 4747, sem abrir janela;
- * - o botão de parar só mata o que ele mesmo subiu; o resto pede confirmação, e um lock de pid morto
- *   não é um host (não há nada a parar, e o clique sobe);
- * - o comando copiado é o comando que roda (`ultimate <caminho>`), com aspas quando o caminho pede —
- *   e nunca é executado por esta extensão;
- * - o ponto do tile vem do esquema do app: pulsa quando trabalha, verde ocioso, cinza parado — e um host
- *   que não respondeu não vira ocioso;
- * - o número de perguntas é o do canto do tile (`1`..`9`, `9+`), e zero não desenha nada;
- * - a frase do tile diz estado, contas e a hora da medida: o indicador envelhece, mas não mente;
- * - o botão do splash escreve só a entrada `splash` de `extensions.disable` nas settings do usuário,
- *   preservando as outras chaves, sem duplicar, e recusando o que o core recusaria inteiro;
- * - a pasta do diálogo do `+` vira caminho absoluto com `~` expandido, e um caminho relativo é recusado
- *   em vez de virar alguma pasta ao acaso;
- * - o home de um projeto novo é o mesmo que o Ultimate calcula (`<home>/.ultimate/projects/<nome>-<8>`).
+ * - the state comes written, not just in the colour: `running` and `stopped` are words in the tile's
+ *   panel, and the group is the position in the rail;
+ * - the tile does not show a port: the label is letters only (`iniciais`), and the port lives in the
+ *   link's href;
+ * - the count and the question counter come from a measured number: not measured is not `0`, it is
+ *   `unavailable` — the invented zero is the worst possible error, because it makes one ignore the
+ *   stuck project;
+ * - the host comes up on the first free port from 4747, without opening a window;
+ * - the stop button kills only what it started itself; the rest asks for confirmation, and a dead-pid
+ *   lock is not a host (there is nothing to stop, and the click brings it up);
+ * - the command copied is the command that runs (`ultimate <path>`), with quotes when the path asks
+ *   for them — and it is never run by this extension;
+ * - the dot of the tile comes from the app's scheme: it pulses when working, green idle, grey stopped —
+ *   and a host that did not answer does not become idle;
+ * - the question number is the one in the tile's corner (`1`..`9`, `9+`), and zero draws nothing;
+ * - the tile's sentence says state, counts and the time of the measurement: the indicator ages, but
+ *   does not lie;
+ * - the splash button writes only the `splash` entry of `extensions.disable` in the user's settings,
+ *   preserving the other keys, without duplicating, and refusing what the core would refuse whole;
+ * - the folder of the `+` dialog becomes an absolute path with `~` expanded, and a relative path is
+ *   refused instead of becoming some folder at random;
+ * - the home of a new project is the same one Ultimate calculates
+ *   (`<home>/.ultimate/projects/<name>-<8>`).
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
@@ -58,7 +63,7 @@ import {
 import type { Alvo } from './projetos.ts'
 import type { Medida, Projeto, Secao } from './tipos.ts'
 
-/** Uma linha como o servidor a manda: de pé, com tantas conversas trabalhando e tantas perguntas. */
+/** A row as the server sends it: up, with so many conversations working and so many questions. */
 const depe = (working: number | null, abertas: number | null = 0): Projeto => ({
   name: 'gta2xlwifi-lineage',
   root: '/projects/gta2xlwifi-lineage',
@@ -69,7 +74,7 @@ const depe = (working: number | null, abertas: number | null = 0): Projeto => ({
   ...(working === null ? { motivo: 'no answer in 3s' } : {}),
 })
 
-/** A mesma linha com o host parado: sem `running` e com o comando para copiar. */
+/** The same row with the host stopped: no `running` and with the command to copy. */
 const parado: Projeto = {
   name: 'robsoncosta',
   root: '/projects/robsoncosta',
@@ -77,40 +82,41 @@ const parado: Projeto = {
   comando: 'ultimate /projects/robsoncosta',
 }
 
-test('o estado vem escrito: a cor nunca é o único sinal', () => {
+test('the state comes written: the colour is never the only signal', () => {
   assert.equal(palavra(depe(2)), 'running')
   assert.equal(palavra(parado), 'stopped')
-  // Sem `running` não há processo: um `working: 0` sozinho não inventa um host de pé.
+  // Without `running` there is no process: a `working: 0` alone does not invent a host that is up.
   assert.equal(palavra({ name: 'x', root: '/x', current: false, working: 0 }), 'stopped')
 })
 
-test('a porta do link sai da URL que o host publica', () => {
+test('the port of the link comes from the URL the host publishes', () => {
   assert.equal(portaDo('http://127.0.0.1:4748'), ':4748')
   assert.equal(portaDo('http://ultimate.localhost:4747'), ':4747')
-  // Sem porta não há link: a linha fica sem endereço em vez de apontar para o lugar errado.
+  // Without a port there is no link: the row stays without an address instead of pointing at the wrong
+  // place.
   assert.equal(portaDo('http://127.0.0.1'), undefined)
   assert.equal(portaDo(undefined), undefined)
   assert.equal(portaDo('não é uma url'), undefined)
 })
 
-test('a contagem é um número medido, e o que não se mediu não vira zero', () => {
+test('the count is a measured number, and what was not measured does not become zero', () => {
   assert.equal(contagem(0), '0 working')
   assert.equal(contagem(1), '1 working')
   assert.equal(contagem(7), '7 working')
-  // `null` é o host que está de pé e não respondeu; `undefined`, o que está parado.
+  // `null` is the host that is up and did not answer; `undefined`, the one that is stopped.
   assert.equal(contagem(null), 'count unavailable')
   assert.equal(contagem(undefined), 'count unavailable')
-  // Um número torto não passa por medida.
+  // A malformed number does not pass as a measurement.
   assert.equal(contagem(Number.NaN), 'count unavailable')
   assert.equal(contagem(-1), 'count unavailable')
   assert.equal(contagem(Number.POSITIVE_INFINITY), 'count unavailable')
 })
 
-test('o contador de perguntas conta em palavra, e o que não se mediu nunca é zero', () => {
+test('the question counter counts in words, and what was not measured is never zero', () => {
   assert.equal(perguntas(0), '0 questions')
   assert.equal(perguntas(1), '1 question')
   assert.equal(perguntas(2), '2 questions')
-  // O silêncio de um host travado não é «nenhuma pergunta»: é falta de medida.
+  // The silence of a stuck host is not "no questions": it is a missing measurement.
   assert.equal(perguntas(null), 'questions unavailable')
   assert.equal(perguntas(undefined), 'questions unavailable')
   assert.equal(perguntas(Number.NaN), 'questions unavailable')
@@ -123,75 +129,78 @@ test('o contador de perguntas conta em palavra, e o que não se mediu nunca é z
   assert.equal(tituloDasPerguntas(undefined), 'questions unavailable')
 })
 
-test('medido só aceita inteiro finito e não negativo', () => {
+test('medido accepts only a finite, non-negative whole number', () => {
   assert.equal(medido(0), 0)
   assert.equal(medido(3), 3)
   for (const torto of [-1, 0.5, Number.NaN, Number.POSITIVE_INFINITY, null, undefined])
     assert.equal(medido(torto), undefined)
 })
 
-test('um zero é medida: só o silêncio do host e o projeto parado não são', () => {
-  // O bug que isto fixa: tratar `0` como ausência e escrever `unavailable` num host que respondeu.
+test('a zero is a measurement: only the silence of the host and the stopped project are not', () => {
+  // The bug this pins down: treating `0` as absence and writing `unavailable` for a host that answered.
   assert.equal(temMedida(0, 0), true)
   assert.equal(temMedida(0, null), true)
   assert.equal(temMedida(null, 2), true)
-  // `null` é o host de pé que não respondeu; `undefined` é o projeto parado, que ninguém perguntou.
+  // `null` is the host that is up and did not answer; `undefined` is the stopped project, which nobody
+  // asked.
   assert.equal(temMedida(null, null), false)
   assert.equal(temMedida(undefined, undefined), false)
   assert.equal(temMedida(Number.NaN, -1), false)
 })
 
-test('só um projeto de pé que não é esta janela tem o que parar', () => {
+test('only a running project that is not this window has something to stop', () => {
   assert.equal(podeParar(depe(1)), true)
-  // Um projeto parado não tem host para deitar: o clique dele sobe.
+  // A stopped project has no host to bring down: its click brings it up.
   assert.equal(podeParar(parado), false)
-  // Quem serve a tela em que se clica não se desliga nela.
+  // What serves the screen you are clicking in is not shut down from it.
   assert.equal(podeParar({ ...depe(0), current: true }), false)
 })
 
-test('o comando copiado é o comando que roda, com aspas quando o caminho pede', () => {
+test('the command copied is the command that runs, with quotes when the path asks for them', () => {
   assert.equal(comando('/projects/robsoncosta'), 'ultimate /projects/robsoncosta')
   assert.equal(comando('/projects/my project'), `ultimate '/projects/my project'`)
   assert.equal(comando("/projects/it's"), `ultimate '/projects/it'\\''s'`)
-  // Um projeto sem `project.json` não tem caminho: a linha diz que não sabe, não chuta um diretório.
+  // A project without `project.json` has no path: the row says it does not know, it does not guess a
+  // directory.
   assert.equal(comando(undefined), undefined)
   assert.equal(comando(''), undefined)
 })
 
-test('a linha de um projeto parado mostra o comando que se copia, e nenhuma medida', () => {
+test('the row of a stopped project shows the command to copy, and no measurement', () => {
   assert.equal(palavra(parado), 'stopped')
   assert.equal(parado.working, undefined)
   assert.equal(parado.perguntasAbertas, undefined)
   assert.equal(comando(parado.root), parado.comando)
 })
 
-test('o tile mostra iniciais, em duas letras', () => {
+test('the tile shows initials, in two letters', () => {
   assert.equal(iniciais('app_evangelho'), 'AE')
   assert.equal(iniciais('gta2xlwifi-lineage'), 'GL')
   assert.equal(iniciais('robsoncosta'), 'RO')
-  // Espaço, ponto e hífen separam igual: duas palavras dão a primeira letra de cada uma.
+  // Space, full stop and hyphen separate alike: two words give the first letter of each one.
   assert.equal(iniciais('my project'), 'MP')
   assert.equal(iniciais('ultra.js'), 'UJ')
-  // Uma palavra só dá as duas primeiras letras; uma letra só é uma letra.
+  // A single word gives its first two letters; a single letter is a single letter.
   assert.equal(iniciais('worktrees'), 'WO')
   assert.equal(iniciais('x'), 'X')
-  // Palavras vazias (só separadores) não viram letra nenhuma.
+  // Empty words (separators only) become no letter at all.
   assert.equal(iniciais('--'), '')
 })
 
-test('o tile não carrega a porta: o rótulo é letra e a porta vive no href', () => {
+test('the tile does not carry the port: the label is letters and the port lives in the href', () => {
   const projeto = depe(1)
-  // O que se desenha no bloco: nada de número, nada de endereço.
+  // What is drawn in the block: no number, no address.
   assert.equal(iniciais(projeto.name), 'GL')
   assert.doesNotMatch(iniciais(projeto.name), /\d/)
-  // O que o clique abre: a URL inteira, com a porta.
+  // What the click opens: the whole URL, with the port.
   assert.equal(linkDo(projeto), 'http://127.0.0.1:4748')
   assert.match(linkDo(projeto) ?? '', /:4748$/)
-  // Parado não tem link: o clique é outra ação (subir), não uma viagem a um endereço que não atende.
+  // Stopped has no link: the click is another action (bring it up), not a trip to an address that does
+  // not answer.
   assert.equal(linkDo(parado), undefined)
 })
 
-test('o rail agrupa: rodando em cima, parados embaixo, o desta janela primeiro', () => {
+test('the rail groups: running on top, stopped below, this window’s first', () => {
   const listar = (projetos: Projeto[]) => grupos(projetos)
   const { rodando, parados } = listar([
     { name: 'zulu', root: '/z', current: false, running: { pid: 1, url: 'http://127.0.0.1:4750' } },
@@ -200,7 +209,7 @@ test('o rail agrupa: rodando em cima, parados embaixo, o desta janela primeiro',
     { name: 'esta-janela', root: '/e', current: true, running: { pid: 3, url: 'http://127.0.0.1:4747' } },
     { name: 'beta', root: '/b', current: false },
   ])
-  // O projeto desta janela abre a coluna; o resto dos que rodam vem por nome.
+  // This window's project opens the column; the rest of the running ones come by name.
   assert.deepEqual(
     rodando.map((projeto) => projeto.name),
     ['esta-janela', 'alfa', 'zulu'],
@@ -209,55 +218,57 @@ test('o rail agrupa: rodando em cima, parados embaixo, o desta janela primeiro',
     parados.map((projeto) => projeto.name),
     ['beta', 'robsoncosta'],
   )
-  // Um projeto que só tem medida não está de pé: sem `running` ele é parado, e o clique sobe o host.
+  // A project that only has a measurement is not up: without `running` it is stopped, and the click
+  // brings the host up.
   const soMedida = listar([{ name: 'medido', root: '/m', current: false, working: 0 }])
   assert.deepEqual(soMedida.rodando, [])
   assert.deepEqual(
     soMedida.parados.map((projeto) => projeto.name),
     ['medido'],
   )
-  // Sem projeto nenhum os dois grupos são vazios, e o rail ainda tem o `+`.
+  // With no project at all the two groups are empty, and the rail still has the `+`.
   assert.deepEqual(listar([]), { rodando: [], parados: [] })
 })
 
-test('o caminho do diálogo expande ~ e recusa o que não é absoluto', () => {
+test('the dialog’s path expands ~ and refuses what is not absolute', () => {
   const home = '/home/juliano'
   assert.equal(caminhoAbsoluto('~/src/novo', home), '/home/juliano/src/novo')
   assert.equal(caminhoAbsoluto('/srv/app', home), '/srv/app')
   assert.equal(caminhoAbsoluto('~', home), '/home/juliano')
-  // Espaço em volta é do usuário, não do caminho.
+  // Space around it is the user's, not the path's.
   assert.equal(caminhoAbsoluto('  ~/src/novo  ', home), '/home/juliano/src/novo')
-  // `.` e `..` resolvem: o caminho que se sobe é o que o diálogo mostra.
+  // `.` and `..` resolve: the path that is brought up is the one the dialog shows.
   assert.equal(caminhoAbsoluto('~/src/../outro', home), '/home/juliano/outro')
-  // Vazio e relativo não são caminho: o diálogo pede um em vez de adivinhar uma pasta.
+  // Empty and relative are not a path: the dialog asks for one instead of guessing a folder.
   assert.equal(caminhoAbsoluto('', home), undefined)
   assert.equal(caminhoAbsoluto('   ', home), undefined)
   assert.equal(caminhoAbsoluto('src/novo', home), undefined)
   assert.equal(caminhoAbsoluto('./novo', home), undefined)
-  // `~outro` não é o home de quem digita: nada de expandir o nome de outra pessoa.
+  // `~other` is not the home of whoever is typing: never expand someone else's name.
   assert.equal(caminhoAbsoluto('~outro/src', home), undefined)
 })
 
-test('o home de um projeto novo é <home>/.ultimate/projects/<nome>-<8 hex>', () => {
+test('the home of a new project is <home>/.ultimate/projects/<name>-<8 hex>', () => {
   assert.equal(
     homeDoProjeto('/home/juliano/src/novo', '/home/juliano'),
     '/home/juliano/.ultimate/projects/novo-3f75ea87',
   )
-  // Mesma pasta, mesmo home: é o cálculo que faz o tile aparecer sozinho depois de subir.
+  // Same folder, same home: it is the calculation that makes the tile appear on its own after coming
+  // up.
   assert.equal(
     homeDoProjeto('/home/juliano/src/novo', '/home/juliano'),
     homeDoProjeto('/home/juliano/src/novo', '/home/juliano'),
   )
-  // Pastas diferentes com o mesmo nome não colidem: o hash é da raiz.
+  // Different folders with the same name do not collide: the hash is of the root.
   assert.notEqual(
     homeDoProjeto('/a/novo', '/home/juliano'),
     homeDoProjeto('/b/novo', '/home/juliano'),
   )
-  // O home do usuário entra inteiro, inclusive quando é um home de testes.
+  // The user's home goes in whole, including when it is a test home.
   assert.match(homeDoProjeto('/a/novo', '/tmp/h'), /^\/tmp\/h\/\.ultimate\/projects\/novo-[0-9a-f]{8}$/)
 })
 
-test('o host se sobe no projeto, na porta escolhida e sem abrir janela', () => {
+test('the host comes up in the project, on the chosen port and without opening a window', () => {
   assert.deepEqual(argumentosDeInicio('/projects/robsoncosta', 4748), [
     '/projects/robsoncosta',
     '--port',
@@ -267,47 +278,47 @@ test('o host se sobe no projeto, na porta escolhida e sem abrir janela', () => {
   assert.equal(programaDeInicio('/opt/ultimate'), '/opt/ultimate/bin/ultimate.ts')
 })
 
-test('a porta é a primeira livre a partir de 4747', async () => {
+test('the port is the first free one from 4747', async () => {
   const visto: number[] = []
   const livre = async (port: number) => {
     visto.push(port)
-    // 4747 e 4748 ocupadas; a primeira livre é 4749.
+    // 4747 and 4748 taken; the first free one is 4749.
     return port >= 4749
   }
   assert.equal(await escolherPorta(livre), 4749)
   assert.deepEqual(visto, [4747, 4748, 4749])
   assert.equal(PRIMEIRA_PORTA, 4747)
 
-  // Sem porta nenhuma livre no intervalo, falha nomeando o intervalo em vez de inventar uma.
+  // With no free port at all in the range, it fails naming the range instead of inventing one.
   await assert.rejects(
     () => escolherPorta(() => false, 4747, 3),
     /No free port from 4747 \(3 tried\)/,
   )
-  // O intervalo começa onde se pediu: a mesma sonda devolve outra porta.
+  // The range starts where it was asked: the same probe returns another port.
   assert.equal(await escolherPorta((port) => port === 4800, 4800, 1), 4800)
 })
 
-test('o botão de parar mata só o que ele subiu; o resto pede confirmação', () => {
+test('the stop button kills only what it started; the rest asks for confirmation', () => {
   const alvo: Alvo = { pid: 48362, url: 'http://127.0.0.1:4748' }
-  // O pid que a extensão gravou é o do lock: é o host dela, e para direto.
+  // The pid the extension recorded is the lock's: it is its own host, and it stops straight away.
   assert.deepEqual(decisaoDeParada(alvo, 48362, false), { acao: 'parar', pid: 48362 })
-  // Outro pid vivo (nascido num terminal, no supervisor, por outra pessoa): pede confirmação, e o
-  // clique seguinte, que já leu a pergunta, é quem manda parar.
+  // Another live pid (born in a terminal, in a supervisor, by someone else): it asks for confirmation,
+  // and the next click, which has already read the question, is the one that orders the stop.
   assert.deepEqual(decisaoDeParada(alvo, undefined, false), { acao: 'confirmar', pid: 48362 })
   assert.deepEqual(decisaoDeParada(alvo, 111, false), { acao: 'confirmar', pid: 48362 })
   assert.deepEqual(decisaoDeParada(alvo, undefined, true), { acao: 'parar', pid: 48362 })
 })
 
-test('um lock de pid morto não é host: não há o que parar, e a linha diz parado', () => {
-  // `host.projects()` só publica `running` quando o pid do lock está vivo: um lock de pid morto chega
-  // aqui como `undefined`, e é isso que faz o botão poder subir o projeto.
+test('a dead-pid lock is not a host: there is nothing to stop, and the row says stopped', () => {
+  // `host.projects()` only publishes `running` when the lock's pid is alive: a dead-pid lock arrives
+  // here as `undefined`, and that is what lets the button bring the project up.
   assert.deepEqual(decisaoDeParada(undefined, undefined, false), { acao: 'nada' })
   assert.deepEqual(decisaoDeParada(undefined, 48362, true), { acao: 'nada' })
-  // O lock morto continua no disco, mas a linha — e o botão — leem só o pid vivo.
+  // The dead lock stays on disk, but the row — and the button — read only the live pid.
   assert.equal(palavra({ name: 'gta2xlwifi-lineage', root: '/x', current: false }), 'stopped')
 })
 
-/** Uma medida da onda do rail, com a hora em que foi feita. */
+/** A measurement of the rail's wave, with the time it was made at. */
 const medida = (
   working: number | null,
   abertas: number | null,
@@ -319,31 +330,32 @@ const medida = (
   at: extra.at ?? '2026-11-10T03:22:43.079Z',
 })
 
-test('o ponto do tile: pulsa trabalhando, verde ocioso, cinza parado, vazado sem resposta', () => {
-  // Trabalhando: é a classe do mark do app (`animate-pulse-dot bg-brand`), não uma cor inventada aqui.
+test('the dot of the tile: pulses working, green idle, grey stopped, hollow without an answer', () => {
+  // Working: it is the app's mark class (`animate-pulse-dot bg-brand`), not a colour invented here.
   assert.equal(presenca(depe(2), medida(2, 0)), 'working')
-  // Zero é medida: nada trabalhando é ocioso de verdade.
+  // Zero is a measurement: nothing working is idle for real.
   assert.equal(presenca(depe(0), medida(0, 0)), 'idle')
-  // Parado não tem o que medir — e uma medida sobrando não inventa um host de pé.
+  // Stopped has nothing to measure — and a leftover measurement does not invent a host that is up.
   assert.equal(presenca(parado, medida(3, 1)), 'stopped')
   assert.equal(presenca(parado, undefined), 'stopped')
-  // De pé e sem leitura ainda (a onda não voltou): não se afirma nada.
+  // Up and with no reading yet (the wave did not come back): nothing is asserted.
   assert.equal(presenca(depe(1), undefined), 'unavailable')
-  // O host de pé que não respondeu **não é ocioso**: é `unavailable`, com o motivo à mão.
+  // The host that is up and did not answer **is not idle**: it is `unavailable`, with the reason at
+  // hand.
   assert.equal(presenca(depe(null), medida(null, null, { motivo: 'no answer in 3s' })), 'unavailable')
-  // Trabalha mesmo com pergunta aberta: as duas coisas cabem no tile (pulso e o número em âmbar).
+  // It works even with a question open: both fit in the tile (the pulse and the number in amber).
   assert.equal(presenca(depe(1), medida(1, 2)), 'working')
-  // Um número torto não vira trabalho.
+  // A malformed number does not become work.
   assert.equal(presenca(depe(Number.NaN), medida(Number.NaN, 0)), 'idle')
 })
 
-test('o número de perguntas cabe no canto do tile: 1..9, 9+ acima, e nada em zero', () => {
+test('the question number fits in the corner of the tile: 1..9, 9+ above, and nothing at zero', () => {
   assert.equal(numeroDePerguntas(1), '1')
   assert.equal(numeroDePerguntas(9), '9')
-  // Acima de nove não cabe no canto: o número vira um aviso, não um dado exato.
+  // Above nine it does not fit in the corner: the number becomes a warning, not an exact piece of data.
   assert.equal(numeroDePerguntas(10), '9+')
   assert.equal(numeroDePerguntas(42), '9+')
-  // Zero não desenha contador nenhum, e o que não se mediu também não vira número.
+  // Zero draws no counter at all, and what was not measured does not become a number either.
   assert.equal(numeroDePerguntas(0), undefined)
   assert.equal(numeroDePerguntas(null), undefined)
   assert.equal(numeroDePerguntas(undefined), undefined)
@@ -351,10 +363,10 @@ test('o número de perguntas cabe no canto do tile: 1..9, 9+ acima, e nada em ze
   assert.equal(numeroDePerguntas(-1), undefined)
 })
 
-test('a frase do tile diz estado, contas e a hora da medida', () => {
-  // Parado: a frase de sempre, porque não há leitura nenhuma para citar.
+test('the tile’s sentence says state, counts and the time of the measurement', () => {
+  // Stopped: the usual sentence, because there is no reading at all to quote.
   assert.equal(tituloDoTile(parado, undefined, undefined), 'robsoncosta — stopped, click to start it')
-  // De pé: o estado, as contas como o painel as escreve, e **de quando** é a medida.
+  // Up: the state, the counts as the panel writes them, and **when** the measurement is from.
   assert.equal(
     tituloDoTile(depe(2), medida(2, 1), '21:53'),
     'gta2xlwifi-lineage — running · 2 working · 1 unanswered question · measured at 21:53 — open it in this tab',
@@ -363,24 +375,24 @@ test('a frase do tile diz estado, contas e a hora da medida', () => {
     tituloDoTile(depe(0), medida(0, 0), '21:53'),
     'gta2xlwifi-lineage — running · 0 working · no unanswered questions · measured at 21:53 — open it in this tab',
   )
-  // A onda ainda não voltou: o tile diz que não mediu, em vez de fingir um ocioso.
+  // The wave has not come back yet: the tile says it did not measure, instead of faking an idle.
   assert.equal(
     tituloDoTile(depe(0), undefined, undefined),
     'gta2xlwifi-lineage — running · not measured yet — open it in this tab',
   )
-  // Sem resposta: `counts unavailable` com o motivo, e nunca um zero.
+  // No answer: `counts unavailable` with the reason, and never a zero.
   assert.equal(
     tituloDoTile(depe(null), medida(null, null, { motivo: 'no answer in 3s' }), '21:53'),
     'gta2xlwifi-lineage — running · counts unavailable — no answer in 3s · measured at 21:53 — open it in this tab',
   )
-  // O projeto desta janela: a frase termina dizendo que ele é esta janela.
+  // This window's project: the sentence ends by saying that it is this window.
   assert.equal(
     tituloDoTile({ ...depe(0), current: true }, medida(0, 0), '21:53'),
     'gta2xlwifi-lineage — running · 0 working · no unanswered questions · measured at 21:53 — this window',
   )
 })
 
-test('a onda guarda uma medida por projeto de pé, com a hora da leitura', () => {
+test('the wave keeps one measurement per project that is up, with the time of the reading', () => {
   const secao: Secao = {
     at: '2026-11-10T03:22:43.079Z',
     splash: true,
@@ -388,60 +400,60 @@ test('a onda guarda uma medida por projeto de pé, com a hora da leitura', () =>
       depe(2, 1),
       { name: 'travado', root: '/t', current: false, running: { pid: 7, url: 'http://127.0.0.1:4751' }, working: null, perguntasAbertas: null, motivo: 'no answer in 3s' },
       parado,
-      // Um projeto de pé que só tem a contagem de perguntas medida não perde a entrada.
+      // A project that is up and only has the question count measured does not lose its entry.
       { name: 'soPerguntas', root: '/s', current: false, running: { pid: 8, url: 'http://127.0.0.1:4752' }, perguntasAbertas: 3 },
     ],
   }
   const medidas = ondaDaLeitura(secao)
   assert.deepEqual(Object.keys(medidas).sort(), ['gta2xlwifi-lineage', 'soPerguntas', 'travado'])
-  // A hora é a da leitura, não a de agora: o tile mostra de quando é o indicador.
+  // The time is the reading's, not now's: the tile shows when the indicator is from.
   assert.equal(medidas['gta2xlwifi-lineage'].at, secao.at)
   assert.equal(medidas['gta2xlwifi-lineage'].working, 2)
   assert.equal(medidas['gta2xlwifi-lineage'].perguntasAbertas, 1)
-  // O silêncio de um host travado chega como `null` com o motivo, não como zero.
+  // The silence of a stuck host arrives as `null` with the reason, not as zero.
   assert.deepEqual(medidas['travado'], {
     working: null,
     perguntasAbertas: null,
     motivo: 'no answer in 3s',
     at: secao.at,
   })
-  // Um zero medido continua zero (e não `null`): é uma resposta, não uma ausência.
+  // A measured zero stays zero (and not `null`): it is an answer, not an absence.
   assert.deepEqual(ondaDaLeitura({ at: secao.at, splash: true, projetos: [depe(0, 0)] }), {
     'gta2xlwifi-lineage': { working: 0, perguntasAbertas: 0, at: secao.at },
   })
-  // Nenhum projeto de pé: nenhuma medida, e nada de entrada inventada.
+  // No project up: no measurement, and no invented entry.
   assert.deepEqual(ondaDaLeitura({ at: secao.at, splash: true, projetos: [parado] }), {})
 })
 
-test('o splash está desligado quando a lista disable o nomeia', () => {
+test('the splash is off when the disable list names it', () => {
   assert.equal(splashLigado({ extensions: { disable: ['splash'] } }), false)
   assert.equal(splashLigado({ extensions: { disable: ['splash', 'rate-limiter'] } }), false)
-  // O arquivo ausente, sem a chave, ou com outra coisa na lista: nada desligou o splash.
+  // A missing file, without the key, or with something else in the list: nothing turned the splash off.
   assert.equal(splashLigado(undefined), true)
   assert.equal(splashLigado({}), true)
   assert.equal(splashLigado({ extensions: {} }), true)
   assert.equal(splashLigado({ extensions: { disable: ['rate-limiter'] } }), true)
-  // O que o core ignora inteiro (JSON torto, `extensions` que não é objeto) é lido como ligado.
+  // What the core ignores whole (broken JSON, an `extensions` that is not an object) is read as on.
   assert.equal(splashLigado([]), true)
   assert.equal(splashLigado({ extensions: [] }), true)
   assert.equal(splashLigado({ extensions: 'splash' }), true)
   assert.equal(splashLigado({ extensions: { disable: 'splash' } }), true)
 })
 
-test('desligar o splash põe splash em disable uma vez, e ligar tira', () => {
-  // Desligar um arquivo que ainda não fala de splash: a entrada nasce uma vez só.
+test('turning the splash off puts splash in disable once, and turning it on takes it out', () => {
+  // Turning off a file that does not speak of the splash yet: the entry is born once only.
   assert.deepEqual(ajustarSplash({}, false), { extensions: { disable: ['splash'] } })
-  // Ligar tira o nome da lista — e as outras entradas ficam onde estavam.
+  // Turning it on takes the name out of the list — and the other entries stay where they were.
   assert.deepEqual(ajustarSplash({ extensions: { disable: ['rate-limiter', 'splash'] } }, true), {
     extensions: { disable: ['rate-limiter'] },
   })
-  // Nada de duplicar: desligar o que já está desligado não mexe no objeto (nem no arquivo).
+  // No duplicating: turning off what is already off does not touch the object (nor the file).
   const desligado = { extensions: { disable: ['splash'] } }
   assert.equal(ajustarSplash(desligado, false), desligado)
-  // E ligar o que já está ligado também não reescreve nada.
+  // And turning on what is already on does not rewrite anything either.
   const ligado = { modelFamilies: { fast: { model: 'cirthan-dev/x' } } }
   assert.equal(ajustarSplash(ligado, true), ligado)
-  // As outras chaves do arquivo são o que o usuário escreveu: ficam todas, em qualquer nível.
+  // The other keys of the file are what the user wrote: they all stay, at any level.
   const cheio = {
     modelFamilies: { default: 'fast' },
     lander: { checks: [['node --test', { timeout: 120 }]] },
@@ -451,8 +463,8 @@ test('desligar o splash põe splash em disable uma vez, e ligar tira', () => {
     ...cheio,
     extensions: { ...cheio.extensions, disable: ['rate-limiter', 'splash'] },
   })
-  // `extensions.enable` nunca é tocado: `disable` vence `enable` na mesma camada, então desligar
-  // funciona mesmo com o splash lá — e ligar não tira nada dele.
+  // `extensions.enable` is never touched: `disable` wins over `enable` in the same layer, so turning it
+  // off works even with the splash there — and turning it on takes nothing out of it.
   assert.deepEqual(ajustarSplash({ extensions: { enable: ['splash'] } }, false), {
     extensions: { enable: ['splash'], disable: ['splash'] },
   })
@@ -461,29 +473,29 @@ test('desligar o splash põe splash em disable uma vez, e ligar tira', () => {
   })
 })
 
-test('o splash recusa, sem escrever, o que o core recusaria inteiro', () => {
-  // Um `extensions` que não é objeto faria o core jogar o arquivo todo fora — e o usuário perderia as
-  // outras chaves. Recusar é a única saída honesta.
+test('the splash refuses, without writing, what the core would refuse whole', () => {
+  // An `extensions` that is not an object would make the core throw the whole file away — and the user
+  // would lose the other keys. Refusing is the only honest way out.
   for (const torto of [[], 'splash', null, 3]) {
     assert.throws(
       () => ajustarSplash({ extensions: torto }, false),
       /extensions must be a JSON object/,
     )
   }
-  // Uma lista que não é lista de nomes também não se reescreve.
+  // A list that is not a list of names is not rewritten either.
   assert.throws(() => ajustarSplash({ extensions: { disable: 'splash' } }, false), /array of names/)
   assert.throws(() => ajustarSplash({ extensions: { disable: [1] } }, true), /array of names/)
   assert.throws(() => ajustarSplash({ extensions: { disable: {} } }, true), /array of names/)
-  // O arquivo que não é um objeto não é settings nenhum.
+  // A file that is not an object is no settings at all.
   for (const torto of [[], 'x', null, undefined, 7]) {
     assert.throws(() => ajustarSplash(torto, false), /settings must be a JSON object/)
   }
   assert.equal(settingsDoUsuario('/home/juliano'), '/home/juliano/.ultimate/settings.json')
 })
 
-test('a frase do botão do splash diz o estado e o que o clique faz', () => {
+test('the splash button’s sentence says the state and what the click does', () => {
   assert.equal(rotuloDoSplash(true), 'Splash on project switch: on — turn it off')
   assert.equal(rotuloDoSplash(false), 'Splash on project switch: off — turn it on')
-  // Antes da primeira leitura o botão não chuta um estado.
+  // Before the first reading the button does not guess a state.
   assert.equal(rotuloDoSplash(undefined), 'Splash on project switch: unknown')
 })
