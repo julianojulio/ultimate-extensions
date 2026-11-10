@@ -10,6 +10,7 @@
         { "command": "node --test projetos/projetos.test.ts", "timeout": 120 },
         { "command": "node --test rate-limiter/limiter.test.ts", "timeout": 120 }
       ]
-    ]
+    ],
+    "push": "origin"
   }
 }
