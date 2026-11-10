@@ -26,7 +26,7 @@ discovered through `~/.ultimate/extensions/` and reload by themselves.
 A suggestion earns its card when it comes from what this machine shows. Measure, let each number speak in the
 card's `detail`, and do not interrogate.
 
-**`projetos` — the rail of this machine's projects.** Count the project homes:
+**`projects` — the rail of this machine's projects.** Count the project homes:
 
 ```sh
 ls -d ~/.ultimate/projects/*/project.json | wc -l
@@ -34,7 +34,7 @@ ls -d ~/.ultimate/projects/*/project.json | wc -l
 
 With two or more, the rail answers a question that has no other answer on screen ("where is something happening
 right now"); with one, it spends 48px of every window to show a single tile, so leave it out of the
-recommendations and say why. Also check whether it is already installed (`ls -l ~/.ultimate/extensions/projetos`):
+recommendations and say why. Also check whether it is already installed (`ls -l ~/.ultimate/extensions/projects`):
 then the option is "already installed" instead of "install".
 
 **`rate-limiter` — a ceiling on simultaneous requests per provider.** Look for the failures it exists for
@@ -65,11 +65,11 @@ One message, not a questionnaire: Ultimate's `message` tool, `to: 'user'`, `ques
 hardens it: a repository path resolves against the app's origin and 404s, and a `data:` URI is dropped — measured on
 this host, a data URI in a preview came out as `[Image blocked: The rail on the left edge]` (the markdown hardening
 of `rehype-harden`, which refuses `data:` images outright). So read each extension's PNG
-(`projetos/screenshots/rail.png`), attach them to the same message in the order of the options (`images`, the entry
+(`projects/screenshots/rail.png`), attach them to the same message in the order of the options (`images`, the entry
 ids of the reads; at most 4 images of 2 MB each), and say which one is which in each option's `detail`
 ("screenshot 1, above").
 
-**The preview** is then three lines, the last one about the disk. For `projetos`:
+**The preview** is then three lines, the last one about the disk. For `projects`:
 
 ```markdown
 **The rail** (screenshot 1): one tile per project on the left edge of every surface — running hosts on top, a
@@ -129,7 +129,7 @@ starting point. Then write it into `~/.ultimate/settings.json`:
 A read-modify-write that keeps every other key: read the file, refuse when it is not a JSON object, change only
 `rateLimiter.limits`, write through a temporary beside the file and a `rename`. Refuse rather than write
 something wrong: this file reaches every extension on the machine, and a typo costs the user their other keys.
-`projetos` does exactly this for its `splash` switch (`projetos/server.ts`, `escreverSettings`) — follow it.
+`projects` does exactly this for its `splash` switch (`projects/server.ts`, `writeSettings`) — follow it.
 The extension refuses `0`, a negative, `1.5` and `"3"` with a notification, leaving that provider unlimited.
 
 The ceiling is per provider and per machine — conversations, subagents and automations together — and saving
@@ -139,7 +139,7 @@ the file applies it without a restart.
 
 ```ts
 ultimate.extensions()                                    // both, with server.loadedAt and no server.error
-ultimate.action('projetos', 'listar', { medir: false })   // this machine's projects, cheap read
+ultimate.action('projects', 'list', { measure: false })   // this machine's projects, cheap read
 ultimate.action('rate-limiter', 'status', {})            // { wrapped, limits, active, queued }
 ```
 

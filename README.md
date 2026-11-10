@@ -24,7 +24,7 @@ projects' homes), not about anyone's product. **What does not**: a project's UI 
 
 ## The extensions
 
-### `projetos` — the rail of this machine's projects
+### `projects` — the rail of this machine's projects
 
 **What it solves:** with more than one project open on this machine, switching from one to the other
 and answering "where is something happening right now" without a window or a terminal: a 48px
@@ -44,7 +44,7 @@ from), it does not show the port on the tile, it schedules nothing, it does not 
 does not kill a process that failed to come up without asking (and never by port, name or group), it
 does not hide or move a project, it does not decide onboarding or trust for a new project, it
 touches no extension besides the splash (and only in this machine's layer), and it does not reach
-another machine. Details in [`projetos/README.md`](projetos/README.md).
+another machine. Details in [`projects/README.md`](projects/README.md).
 
 ### `rate-limiter` — a ceiling on simultaneous requests per provider
 
@@ -77,7 +77,7 @@ Then measure my machine the way the skill says — how many project homes ~/.ult
 ~/.ultimate/health.json or the recent model calls show 429s — tell me what the numbers justify, and ask me with
 one card: one option per extension, each with its screenshot, what it does and what it writes to disk.
 Install only what I pick; for the rate limiter, ask which providers to cap and with what ceiling. Prove it live
-(ultimate.extensions(), and the projetos and rate-limiter actions) without restarting Ultimate, then tell me what
+(ultimate.extensions(), and the projects and rate-limiter actions) without restarting Ultimate, then tell me what
 was written and how to undo it.
 
 Stop and ask me whenever a step needs a password, a login or a decision.
@@ -106,13 +106,17 @@ this repository that is an extension (`server.ts` or `web.tsx`):
 A real folder at `~/.ultimate/extensions/<name>` is **not** replaced: the script warns and moves on
 (no deleting someone else's content). A `node_modules` that is not a link also stays as it is.
 
+It also clears a dead link: a link in `~/.ultimate/extensions/` that points into this repository, at a
+folder that no longer exists, is removed. Installed before the rename (`projetos/` → `projects/`)?
+Run it again.
+
 **None of this asks for an Ultimate restart**: the extensions reload hot. The proof, in any
 conversation:
 
 ```ts
-ultimate.action('projetos', 'listar', {})              // this machine's projects, with state and measurements
-ultimate.action('projetos', 'listar', { medir: false }) // the rail's cheap read, without measuring
-ultimate.action('projetos', 'splash', { enabled: false }) // turns the splash animation off (and true turns it on)
+ultimate.action('projects', 'list', {})              // this machine's projects, with state and measurements
+ultimate.action('projects', 'list', { measure: false }) // the rail's cheap read, without measuring
+ultimate.action('projects', 'splash', { enabled: false }) // turns the splash animation off (and true turns it on)
 ultimate.action('rate-limiter', 'status', {})          // { wrapped, limits, active, queued }
 ```
 
@@ -124,15 +128,15 @@ The host loads the extension through the link's **target** (`realpath`, in `serv
 the watcher reports the file **through the link**; `server/extensions.ts` already resolves one to the
 other before invalidating the module. Measurement made on this machine, with both extensions live:
 
-| | `projetos` `loadedAt` | `rate-limiter` `loadedAt` |
+| | `projects` `loadedAt` | `rate-limiter` `loadedAt` |
 | --- | --- | --- |
-| before editing `projetos/server.ts` in the repository | `2026-11-10T01:16:39.746Z` | `2026-11-10T01:16:40.111Z` |
+| before editing `projects/server.ts` in the repository | `2026-11-10T01:16:39.746Z` | `2026-11-10T01:16:40.111Z` |
 | after saving | `2026-11-10T01:17:27.808Z` | `2026-11-10T01:16:40.111Z` (untouched) |
 
-And it was not only the `loadedAt`: the test edit added a temporary field to the return of `listar`
+And it was not only the `loadedAt`: the test edit added a temporary field to the return of `list`
 (`sonda: 'symlink-reload'`), which the action returned right after. That is, the module re-read was
 **the link target's**, with the new content — not a cache, not the link's file. With the `sonda`
-removed, the action returned `{ projetos, at, splash }` again. The `rate-limiter` answered `status`
+removed, the action returned `{ projects, at, splash }` again. The `rate-limiter` answered `status`
 normally the whole time, and **the host was not restarted**.
 
 That is why the install is by symlink: you edit here, and Ultimate reloads on its own.
@@ -143,7 +147,7 @@ The code is **here**; `~/.ultimate/extensions/<name>` is only the link Ultimate 
 `git pull` (or moving the clone), run `install.sh` again.
 
 ```sh
-cd ~/src/ultimate-extensions/projetos     && node --test projetos.test.ts   # 26 tests
+cd ~/src/ultimate-extensions/projects     && node --test projects.test.ts   # 26 tests
 cd ~/src/ultimate-extensions/rate-limiter && node --test limiter.test.ts    # 12 tests
 ```
 
@@ -157,13 +161,13 @@ in the sidebar — is proven live, with Ultimate open.
 ultimate-extensions/
 ├── install.sh          # links each extension into ~/.ultimate/extensions/<name>
 ├── LICENSE             # MIT
-├── projetos/           # the projects rail on the left edge
+├── projects/           # the projects rail on the left edge
 │   ├── README.md
-│   ├── server.ts        # actions: listar, medir, estado, iniciar, criar, parar, splash
-│   ├── projetos.ts      # the pure calculations (initials, groups, presence, path, port, stop, splash)
-│   ├── tipos.ts         # what the actions return
+│   ├── server.ts        # actions: list, measure, state, start, create, stop, splash
+│   ├── projects.ts      # the pure calculations (initials, groups, presence, path, port, stop, splash)
+│   ├── types.ts         # what the actions return
 │   ├── web.tsx          # the rail, the tile panel, the + dialog, the phone list and the bottom
-│   ├── projetos.test.ts
+│   ├── projects.test.ts
 │   └── screenshots/     # rail, state, bottom, panel and a new project's dialog
 └── rate-limiter/       # a ceiling on simultaneous requests per provider
     ├── README.md

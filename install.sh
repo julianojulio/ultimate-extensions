@@ -16,6 +16,25 @@ modules="$ultimate/node_modules"
 
 mkdir -p "$dest"
 
+# A renamed extension leaves a dead link behind: a link here that points into this repository, at a
+# folder that no longer exists, is removed — never a real folder, and never a link that points
+# anywhere else. Nothing else in the destination is read or removed.
+for link in "$dest"/*; do
+  if [ ! -L "$link" ]; then
+    continue
+  fi
+  target=$(readlink "$link")
+  case "$target" in
+    "$repo"/*) ;;
+    *) continue ;;
+  esac
+  if [ -e "$target" ]; then
+    continue
+  fi
+  rm "$link"
+  echo "rm    ${link##*/}: its target $target is gone"
+done
+
 for path in "$repo"/*/; do
   name=${path%/}
   name=${name##*/}
@@ -50,4 +69,4 @@ for path in "$repo"/*/; do
 done
 
 # Reload is hot: nothing here asks for an Ultimate restart. The proof is the two actions, in any
-# conversation: `projetos` → `listar` and `rate-limiter` → `status`.
+# conversation: `projects` → `list` and `rate-limiter` → `status`.

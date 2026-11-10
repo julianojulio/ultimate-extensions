@@ -3,24 +3,24 @@
  * and brings a host up, brings one down or creates one when someone clicks a tile, in the tile's panel
  * or on the `+`.
  *
- * The code lives in the machine extensions' repository, `~/src/ultimate-extensions/projetos`; what
- * Ultimate loads is the symlink `~/.ultimate/extensions/projetos`, made by its `install.sh`. Editing is
+ * The code lives in the machine extensions' repository, `~/src/ultimate-extensions/projects`; what
+ * Ultimate loads is the symlink `~/.ultimate/extensions/projects`, made by its `install.sh`. Editing is
  * in the repository, and the hot reload follows the link.
  *
- * `listar` shows this machine's projects (`host.projects()`: the central homes of
+ * `list` shows this machine's projects (`host.projects()`: the central homes of
  * `~/.ultimate/projects`, with the URL of those that are up). The rail opens with
- * `listar({ medir: false })` — no trip to another host, the cheap read that draws the tiles — and then
- * makes a wave of full `listar()` reads for the presence dot and the question count: on opening, on
+ * `list({ measure: false })` — no trip to another host, the cheap read that draws the tiles — and then
+ * makes a wave of full `list()` reads for the presence dot and the question count: on opening, on
  * entering the rail with the pointer (at most once every 15 s), on the refresh button and after each
- * action. The panel's `medir` asks **that** host when the panel opens. Neither the `busy` nor another
+ * action. The panel's `measure` asks **that** host when the panel opens. Neither the `busy` nor another
  * project's questions are anywhere on disk — the
  * conversation list each host publishes keeps neither the task graph nor the question box —, so the
  * question goes by HTTP to that project's own host, on loopback, and it answers about itself
- * (`estado`). Loopback with the target's `Origin` is the same path `lib/remote.ts` uses to talk to
- * another instance. `listar()` with no argument keeps measuring everyone: it is what the phone's list
+ * (`state`). Loopback with the target's `Origin` is the same path `lib/remote.ts` uses to talk to
+ * another instance. `list()` with no argument keeps measuring everyone: it is what the phone's list
  * shows and what any other host that calls the action receives.
  *
- * The three actions that touch the machine (`iniciar`, `parar`, `criar`) follow four rules, and all of
+ * The three actions that touch the machine (`start`, `stop`, `create`) follow four rules, and all of
  * them are mandatory:
  *
  * 1. **The guard is the live pid, never the file.** A dead pid's lock is a stopped project and the click
@@ -66,45 +66,45 @@ import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
 import type { JsonValue } from '@earendil-works/chord'
 import { defineExtension } from '@earendil-works/pi-durable'
 import {
-  ajustarSplash,
-  argumentosDeInicio,
-  caminhoAbsoluto,
-  comando,
-  decisaoDeParada,
-  escolherPorta,
-  homeDoProjeto,
-  programaDeInicio,
-  settingsDoUsuario,
-  splashLigado,
-} from './projetos.ts'
+  adjustSplash,
+  startArgs,
+  absolutePath,
+  command,
+  stopDecision,
+  choosePort,
+  projectHome,
+  startProgram,
+  userSettings,
+  splashEnabled,
+} from './projects.ts'
 import type {
-  Estado,
-  Medida,
-  Projeto,
-  ResultadoDaCriacao,
-  ResultadoDaParada,
-  Secao,
+  State,
+  Measurement,
+  Project,
+  CreateResult,
+  StopResult,
+  Section,
   Splash,
-} from './tipos.ts'
+} from './types.ts'
 
-export default defineExtension({ name: 'projetos' })
+export default defineExtension({ name: 'projects' })
 
 /** How long another project's host is given to answer before it is said not to have answered. */
-const ESPERA = 3000
+const WAIT = 3000
 
 /** The deadline of the health check of a host that has just been brought up. */
-const ESPERA_SUBIDA = 20000
+const START_WAIT = 20000
 
 /** How long the SIGTERM is given before escalating to SIGKILL. */
-const ESPERA_PARADA = 8000
+const STOP_WAIT = 8000
 
 /** What was written in the project's home when it was this extension that brought that pid up. */
-const REGISTO = 'projetos-started.json'
+const RECORD = 'projects-started.json'
 
 /** The output of the host that was brought up, so that the row can say why it did not come up. */
-const LOG = 'projetos-start.log'
+const LOG = 'projects-start.log'
 
-interface ProjetoDoHost {
+interface HostProject {
   name: string
   root?: string
   home: string
@@ -113,16 +113,16 @@ interface ProjetoDoHost {
 }
 
 /** The `messages` service (core, always on), from which only what waits for the user is asked. */
-interface ServicoDeMensagens {
+interface MessagesService {
   openQuestions(ctx: unknown): Promise<{ message: number; conversation: number; at: number; text: string }[]>
 }
-const Mensagens = { name: 'messages' } as const
+const Messages = { name: 'messages' } as const
 
-interface Contexto {
+interface Context {
   signal: AbortSignal
   host: {
     ultimateRoot: string
-    projects(): Promise<ProjetoDoHost[]>
+    projects(): Promise<HostProject[]>
     /** This host's conversations, with the `busy` of the live task graph. */
     conversations(): readonly { busy: boolean }[]
     need<S>(api: { name: string }): S
@@ -130,36 +130,36 @@ interface Contexto {
 }
 
 /** The measurements of a host that is up: `null` is what it did not answer. */
-interface Medidas {
+interface Measurements {
   working: number | null
-  perguntasAbertas: number | null
-  motivo?: string
+  openQuestions: number | null
+  reason?: string
 }
 
 /** How many conversations of this host are working now. */
-const trabalhando = (ctx: Contexto) => ctx.host.conversations().filter((item) => item.busy).length
+const workingNow = (ctx: Context) => ctx.host.conversations().filter((item) => item.busy).length
 
 /**
  * How many questions wait for an answer in this host. The `messages` service is the one that knows (it is
  * the same count as the questions panel); when it does not answer, the count does not become zero — it
  * becomes `null`.
  */
-async function abertas(ctx: Contexto): Promise<number | null> {
+async function countOpenQuestions(ctx: Context): Promise<number | null> {
   try {
-    const servico = ctx.host.need<ServicoDeMensagens>(Mensagens)
-    return (await servico.openQuestions(context)).length
+    const service = ctx.host.need<MessagesService>(Messages)
+    return (await service.openQuestions(context)).length
   } catch {
     return null
   }
 }
 
 /** The reason in one short line, the way it fits in the `title` of a row of the rail. */
-function motivo(erro: unknown): string {
-  if (erro instanceof Error) {
-    if (erro.name === 'TimeoutError') return `no answer in ${ESPERA / 1000}s`
-    return erro.message
+function reason(error: unknown): string {
+  if (error instanceof Error) {
+    if (error.name === 'TimeoutError') return `no answer in ${WAIT / 1000}s`
+    return error.message
   }
-  return String(erro)
+  return String(error)
 }
 
 /**
@@ -167,91 +167,91 @@ function motivo(erro: unknown): string {
  * for an answer. The target's `Origin` is what its `admit` accepts on loopback; a host that does not
  * answer (or does not have this extension) returns an error, and whoever called shows `unavailable`.
  */
-async function perguntar(
+async function ask(
   url: string,
   signal: AbortSignal,
-): Promise<{ working: number | null; perguntasAbertas: number | null }> {
+): Promise<{ working: number | null; openQuestions: number | null }> {
   const origin = new URL(url).origin
-  const resposta = await fetch(`${origin}/api/extensions/projetos/actions/estado`, {
+  const response = await fetch(`${origin}/api/extensions/projects/actions/state`, {
     method: 'POST',
     headers: { Origin: origin, 'Content-Type': 'application/json' },
     body: '{}',
-    signal: AbortSignal.any([AbortSignal.timeout(ESPERA), signal]),
+    signal: AbortSignal.any([AbortSignal.timeout(WAIT), signal]),
   })
-  const corpo = (await resposta.json().catch(() => ({}))) as {
-    result?: { working?: unknown; perguntasAbertas?: unknown }
+  const body = (await response.json().catch(() => ({}))) as {
+    result?: { working?: unknown; openQuestions?: unknown }
     error?: unknown
   }
-  if (!resposta.ok)
-    throw new Error(typeof corpo.error === 'string' ? corpo.error : `HTTP ${resposta.status}`)
-  const working = numero(corpo.result?.working)
-  const perguntasAbertas = numero(corpo.result?.perguntasAbertas)
+  if (!response.ok)
+    throw new Error(typeof body.error === 'string' ? body.error : `HTTP ${response.status}`)
+  const working = asCount(body.result?.working)
+  const openQuestions = asCount(body.result?.openQuestions)
   // An answer with neither of the two numbers is no measurement at all: it is as if it had not answered.
-  if (working === null && perguntasAbertas === null) throw new Error('the answer carried no count')
-  return { working, perguntasAbertas }
+  if (working === null && openQuestions === null) throw new Error('the answer carried no count')
+  return { working, openQuestions }
 }
 
-/** A measurement number, or `null` for a crooked value; the same criterion as `projetos.ts`. */
-function numero(valor: unknown): number | null {
-  return typeof valor === 'number' && Number.isFinite(valor) && valor >= 0 ? valor : null
+/** A measurement number, or `null` for a crooked value; the same criterion as `projects.ts`. */
+function asCount(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
 }
 
 /** A row of the section from what was measured: it never invents a number that did not come. */
-function montar(projeto: ProjetoDoHost, medidas?: Medidas): Projeto {
-  const cmd = comando(projeto.root)
+function toRow(project: HostProject, measurements?: Measurements): Project {
+  const cmd = command(project.root)
   return {
-    name: projeto.name,
-    root: projeto.root ?? '',
-    current: projeto.current,
-    ...(projeto.running ? { running: projeto.running } : {}),
-    ...(cmd ? { comando: cmd } : {}),
-    ...(medidas
+    name: project.name,
+    root: project.root ?? '',
+    current: project.current,
+    ...(project.running ? { running: project.running } : {}),
+    ...(cmd ? { command: cmd } : {}),
+    ...(measurements
       ? {
-          working: medidas.working,
-          perguntasAbertas: medidas.perguntasAbertas,
-          ...(medidas.motivo ? { motivo: medidas.motivo } : {}),
+          working: measurements.working,
+          openQuestions: measurements.openQuestions,
+          ...(measurements.reason ? { reason: measurements.reason } : {}),
         }
       : {}),
   }
 }
 
 /** The name the action received, or an error: project names, never paths. */
-function nomeDoArgumento(args: JsonValue): string {
-  const valor =
+function nameArgument(args: JsonValue): string {
+  const value =
     args && typeof args === 'object' && !Array.isArray(args)
       ? (args as { name?: unknown }).name
       : undefined
-  if (typeof valor !== 'string' || !valor.trim()) throw new Error('name must be a project name')
-  return valor.trim()
+  if (typeof value !== 'string' || !value.trim()) throw new Error('name must be a project name')
+  return value.trim()
 }
 
 /** The project by name, read from disk now (`host.projects()` reads the lock on every call). */
-async function procurar(ctx: Contexto, name: string): Promise<ProjetoDoHost> {
-  const projeto = (await ctx.host.projects()).find((item) => item.name === name)
-  if (!projeto) throw new Error(`Unknown project ${JSON.stringify(name)}`)
-  return projeto
+async function findProject(ctx: Context, name: string): Promise<HostProject> {
+  const project = (await ctx.host.projects()).find((item) => item.name === name)
+  if (!project) throw new Error(`Unknown project ${JSON.stringify(name)}`)
+  return project
 }
 
 /** Is the pid alive? A process of another owner (EPERM) counts as alive. */
-function vivo(pid: number): boolean {
+function alive(pid: number): boolean {
   try {
     process.kill(pid, 0)
     return true
-  } catch (erro) {
-    return (erro as NodeJS.ErrnoException).code !== 'ESRCH'
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH'
   }
 }
 
 /** A home's lock, re-read now: a `pid` with no live process is still a lock, but it is not a host. */
-async function lerLock(home: string): Promise<{ pid: number; port?: number } | undefined> {
+async function readLock(home: string): Promise<{ pid: number; port?: number } | undefined> {
   try {
-    const lido = JSON.parse(await readFile(join(home, 'ultimate.lock'), 'utf8')) as {
+    const parsed = JSON.parse(await readFile(join(home, 'ultimate.lock'), 'utf8')) as {
       pid?: unknown
       port?: unknown
     }
-    if (typeof lido.pid !== 'number' || !Number.isSafeInteger(lido.pid) || lido.pid < 1)
+    if (typeof parsed.pid !== 'number' || !Number.isSafeInteger(parsed.pid) || parsed.pid < 1)
       return undefined
-    return { pid: lido.pid, ...(typeof lido.port === 'number' ? { port: lido.port } : {}) }
+    return { pid: parsed.pid, ...(typeof parsed.port === 'number' ? { port: parsed.port } : {}) }
   } catch {
     return undefined
   }
@@ -259,31 +259,31 @@ async function lerLock(home: string): Promise<{ pid: number; port?: number } | u
 
 /** The pid this extension brought up for that home, if it was this extension and it is still the
  * record's. */
-async function lembrado(home: string): Promise<number | undefined> {
+async function remembered(home: string): Promise<number | undefined> {
   try {
-    const lido = JSON.parse(await readFile(join(home, REGISTO), 'utf8')) as { pid?: unknown }
-    return typeof lido.pid === 'number' && Number.isSafeInteger(lido.pid) ? lido.pid : undefined
+    const parsed = JSON.parse(await readFile(join(home, RECORD), 'utf8')) as { pid?: unknown }
+    return typeof parsed.pid === 'number' && Number.isSafeInteger(parsed.pid) ? parsed.pid : undefined
   } catch {
     return undefined
   }
 }
 
-async function lembrar(home: string, pid: number, port: number) {
+async function remember(home: string, pid: number, port: number) {
   await writeFile(
-    join(home, REGISTO),
+    join(home, RECORD),
     JSON.stringify({ pid, port, at: new Date().toISOString() }) + '\n',
   )
 }
 
 /** Forgets the record, only when it still names `pid`: another one's pid is not erased by mistake. */
-async function esquecer(home: string, pid: number | undefined) {
-  if ((await lembrado(home)) === pid) await rm(join(home, REGISTO), { force: true })
+async function forget(home: string, pid: number | undefined) {
+  if ((await remembered(home)) === pid) await rm(join(home, RECORD), { force: true })
 }
 
 /** The environment of the user's home, as the harness resolves it: `ULTIMATE_USER_HOME` when there is
  * one (an isolated preview, a test home), otherwise the system's. The projects and the settings come from
  * it. */
-function usuario(): string {
+function userHome(): string {
   return process.env.ULTIMATE_USER_HOME ?? homedir()
 }
 
@@ -292,22 +292,22 @@ function usuario(): string {
  * missing file is an empty object — turning the splash off creates the file, turning it on has nothing to
  * create.
  */
-async function lerSettings(): Promise<{ settings?: Record<string, unknown>; erro?: string }> {
-  const path = settingsDoUsuario(usuario())
-  let texto: string
+async function readSettings(): Promise<{ settings?: Record<string, unknown>; error?: string }> {
+  const path = userSettings(userHome())
+  let text: string
   try {
-    texto = await readFile(path, 'utf8')
-  } catch (erro) {
-    if ((erro as NodeJS.ErrnoException).code === 'ENOENT') return {}
-    return { erro: `Cannot change the splash: ${path}: ${motivo(erro)}` }
+    text = await readFile(path, 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}
+    return { error: `Cannot change the splash: ${path}: ${reason(error)}` }
   }
   try {
-    const valor: unknown = JSON.parse(texto)
-    if (!valor || typeof valor !== 'object' || Array.isArray(valor))
+    const value: unknown = JSON.parse(text)
+    if (!value || typeof value !== 'object' || Array.isArray(value))
       throw new Error('settings must be a JSON object')
-    return { settings: valor as Record<string, unknown> }
-  } catch (erro) {
-    return { erro: `Cannot change the splash: ${path}: ${motivo(erro)}. Nothing was written` }
+    return { settings: value as Record<string, unknown> }
+  } catch (error) {
+    return { error: `Cannot change the splash: ${path}: ${reason(error)}. Nothing was written` }
   }
 }
 
@@ -317,15 +317,15 @@ async function lerSettings(): Promise<{ settings?: Record<string, unknown>; erro
  * that is rewritten — the link stays. The JSON is written normalised, in two spaces: the formatting from
  * before is lost.
  */
-async function escreverSettings(path: string, settings: Record<string, unknown>) {
-  const alvo = await realpath(path).catch(() => path)
-  await mkdir(dirname(alvo), { recursive: true })
-  const temporario = join(dirname(alvo), `.${basename(alvo)}.${randomUUID()}.tmp`)
+async function writeSettings(path: string, settings: Record<string, unknown>) {
+  const target = await realpath(path).catch(() => path)
+  await mkdir(dirname(target), { recursive: true })
+  const temporary = join(dirname(target), `.${basename(target)}.${randomUUID()}.tmp`)
   try {
-    await writeFile(temporario, JSON.stringify(settings, null, 2) + '\n', { flag: 'wx' })
-    await rename(temporario, alvo)
+    await writeFile(temporary, JSON.stringify(settings, null, 2) + '\n', { flag: 'wx' })
+    await rename(temporary, target)
   } finally {
-    await rm(temporario, { force: true })
+    await rm(temporary, { force: true })
   }
 }
 
@@ -334,24 +334,24 @@ async function escreverSettings(path: string, settings: Record<string, unknown>)
  * because the extension reloads between one and the other. A file that cannot be read counts as on —
  * which is what the core does with it too.
  */
-async function splashAgora(): Promise<boolean> {
-  return splashLigado((await lerSettings()).settings)
+async function splashNow(): Promise<boolean> {
+  return splashEnabled((await readSettings()).settings)
 }
 
 /**
  * The environment of the host that is brought up: the identity of this host is not worth anything to
  * another project.
  */
-function ambiente(home: string): NodeJS.ProcessEnv {
+function environment(home: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     ULTIMATE_HOME: home,
     // The child reads this host's same `~/.ultimate` — in an isolated preview, the private copy, not the
     // system's.
-    ULTIMATE_USER_HOME: usuario(),
+    ULTIMATE_USER_HOME: userHome(),
     ULTIMATE_NO_OPEN: '1',
   }
-  for (const nome of [
+  for (const name of [
     'ULTIMATE_PORT',
     'ULTIMATE_PROJECT',
     'ULTIMATE_SUPERVISED',
@@ -359,7 +359,7 @@ function ambiente(home: string): NodeJS.ProcessEnv {
     'ULTIMATE_PREVIOUS_BUILD',
     'ULTIMATE_PUBLIC_URL',
   ])
-    delete env[nome]
+    delete env[name]
   return env
 }
 
@@ -367,23 +367,23 @@ function ambiente(home: string): NodeJS.ProcessEnv {
  * Brings the detached process up, with the output in the project's log; `detached` is the `setsid` that
  * lets it go.
  */
-function lancar(
-  programa: string,
+function launch(
+  program: string,
   args: string[],
   options: { cwd: string; env: NodeJS.ProcessEnv; log: string },
 ): ChildProcess {
-  const saida = openSync(options.log, 'w')
+  const output = openSync(options.log, 'w')
   try {
-    const child = spawn(programa, args, {
+    const child = spawn(program, args, {
       cwd: options.cwd,
       env: options.env,
       detached: true,
-      stdio: ['ignore', saida, saida],
+      stdio: ['ignore', output, output],
     })
     child.unref()
     return child
   } finally {
-    closeSync(saida)
+    closeSync(output)
   }
 }
 
@@ -391,8 +391,8 @@ function lancar(
  * Does the port answer? The health check of a host that has just been brought up is the HTTP answer, not
  * the bind.
  */
-async function saude(url: string, saiu: () => string | undefined): Promise<string | undefined> {
-  const limite = Date.now() + ESPERA_SUBIDA
+async function health(url: string, exited: () => string | undefined): Promise<string | undefined> {
+  const deadline = Date.now() + START_WAIT
   for (;;) {
     try {
       // Until the core opens, the supervisor holds the connection without answering: the deadline decides.
@@ -400,35 +400,35 @@ async function saude(url: string, saiu: () => string | undefined): Promise<strin
     } catch {
       // Not answering yet.
     }
-    const motivo = saiu()
-    if (motivo) return motivo
-    if (Date.now() > limite) return `no answer in ${ESPERA_SUBIDA / 1000}s`
+    const reason = exited()
+    if (reason) return reason
+    if (Date.now() > deadline) return `no answer in ${START_WAIT / 1000}s`
     await sleep(150)
   }
 }
 
 /** The log line of the host that was brought up that says why it did not come up, for the tile's panel. */
-async function cauda(log: string): Promise<string> {
-  const texto = await readFile(log, 'utf8').catch(() => '')
-  const linhas = texto
+async function logTail(log: string): Promise<string> {
+  const text = await readFile(log, 'utf8').catch(() => '')
+  const lines = text
     .split('\n')
-    .map((linha) => linha.trim())
+    .map((line) => line.trim())
     .filter(Boolean)
   // The error that matters is the line the process names; the stack below it is noise.
-  const erro = linhas.find((linha) => /^(?:Error|\[error\])/.test(linha))
-  return (erro ?? linhas.slice(-2).join(' · ')).slice(0, 240)
+  const error = lines.find((line) => /^(?:Error|\[error\])/.test(line))
+  return (error ?? lines.slice(-2).join(' · ')).slice(0, 240)
 }
 
 /** Terminates a process this extension has just brought up: TERM and, past the deadline, KILL. */
-async function encerrar(pid: number) {
+async function terminate(pid: number) {
   try {
     process.kill(pid, 'SIGTERM')
   } catch {
     return
   }
-  const limite = Date.now() + ESPERA_PARADA
-  while (vivo(pid) && Date.now() < limite) await sleep(100)
-  if (!vivo(pid)) return
+  const deadline = Date.now() + STOP_WAIT
+  while (alive(pid) && Date.now() < deadline) await sleep(100)
+  if (!alive(pid)) return
   try {
     process.kill(pid, 'SIGKILL')
   } catch {
@@ -440,12 +440,12 @@ async function encerrar(pid: number) {
  * Did the host stop and the lock vanish? It waits until that becomes true, and returns whether it did: a
  * lock of a pid other than ours counts as stopped (another host took the project).
  */
-async function esperarSumir(home: string, pid: number, prazo: number): Promise<boolean> {
-  const limite = Date.now() + prazo
+async function waitForGone(home: string, pid: number, timeout: number): Promise<boolean> {
+  const deadline = Date.now() + timeout
   for (;;) {
-    const lido = await lerLock(home)
-    if (!vivo(pid) && lido?.pid !== pid) return true
-    if (Date.now() > limite) return false
+    const parsed = await readLock(home)
+    if (!alive(pid) && parsed?.pid !== pid) return true
+    if (Date.now() > deadline) return false
     await sleep(100)
   }
 }
@@ -454,18 +454,18 @@ async function esperarSumir(home: string, pid: number, prazo: number): Promise<b
  * Stops the host of pid `pid` and checks that that project's lock is gone. It kills **only** that pid: no
  * group, no `pkill`, no killing by port.
  */
-async function desligar(home: string, pid: number) {
+async function shutDown(home: string, pid: number) {
   try {
     process.kill(pid, 'SIGTERM')
-  } catch (erro) {
-    if ((erro as NodeJS.ErrnoException).code !== 'ESRCH')
-      throw new Error(`Cannot stop pid ${pid}: ${motivo(erro)}`)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ESRCH')
+      throw new Error(`Cannot stop pid ${pid}: ${reason(error)}`)
     // The pid vanished before the signal: there is nothing to stop. If its lock stayed, the row says so.
-    if ((await lerLock(home))?.pid === pid)
+    if ((await readLock(home))?.pid === pid)
       throw new Error(`pid ${pid} was already gone, and its lock file was left behind`)
     return
   }
-  if (await esperarSumir(home, pid, ESPERA_PARADA)) return
+  if (await waitForGone(home, pid, STOP_WAIT)) return
   // It did not go down by itself: SIGKILL on the same pid. A host killed that way does not close the lock —
   // and the row says so.
   try {
@@ -473,162 +473,162 @@ async function desligar(home: string, pid: number) {
   } catch {
     // It exited between the test and the signal.
   }
-  const limite = Date.now() + 3000
-  while (vivo(pid) && Date.now() < limite) await sleep(100)
-  if (vivo(pid)) throw new Error(`pid ${pid} did not exit, even with SIGKILL`)
-  if ((await lerLock(home))?.pid === pid)
+  const deadline = Date.now() + 3000
+  while (alive(pid) && Date.now() < deadline) await sleep(100)
+  if (alive(pid)) throw new Error(`pid ${pid} did not exit, even with SIGKILL`)
+  if ((await readLock(home))?.pid === pid)
     throw new Error(`pid ${pid} only stopped with SIGKILL: its lock file was left behind`)
 }
 
 /** The port that can be opened on loopback now. */
-function portaLivre(port: number): Promise<boolean> {
+function freePort(port: number): Promise<boolean> {
   return new Promise((resolve) => {
-    const servidor = createServer()
-    servidor.once('error', () => resolve(false))
-    servidor.listen(port, '127.0.0.1', () => servidor.close(() => resolve(true)))
+    const server = createServer()
+    server.once('error', () => resolve(false))
+    server.listen(port, '127.0.0.1', () => server.close(() => resolve(true)))
   })
 }
 
 /**
- * Did the action ask for a measurement? The rail calls `listar({ medir: false })`: no number appears on a
+ * Did the action ask for a measurement? The rail calls `list({ measure: false })`: no number appears on a
  * tile.
  */
-function pediuMedida(args: JsonValue): boolean {
+function wantsMeasurement(args: JsonValue): boolean {
   if (!args || typeof args !== 'object' || Array.isArray(args)) return true
-  return (args as { medir?: unknown }).medir !== false
+  return (args as { measure?: unknown }).measure !== false
 }
 
 /** Did the splash button ask for on or off: a boolean, never what one guesses from an `undefined`. */
-function ligadoDoArgumento(args: JsonValue): boolean {
-  const valor =
+function enabledArgument(args: JsonValue): boolean {
+  const value =
     args && typeof args === 'object' && !Array.isArray(args)
       ? (args as { enabled?: unknown }).enabled
       : undefined
-  if (typeof valor !== 'boolean') throw new Error('enabled must be true or false')
-  return valor
+  if (typeof value !== 'boolean') throw new Error('enabled must be true or false')
+  return value
 }
 
 /** The path the `+` dialog sent, as text: empty is not a path, and the dialog asks for one. */
-function caminhoDoArgumento(args: JsonValue): string {
-  const valor =
+function pathArgument(args: JsonValue): string {
+  const value =
     args && typeof args === 'object' && !Array.isArray(args)
-      ? (args as { caminho?: unknown }).caminho
+      ? (args as { path?: unknown }).path
       : undefined
-  if (typeof valor !== 'string' || !valor.trim())
+  if (typeof value !== 'string' || !value.trim())
     throw new Error('Enter a folder path, such as ~/src/my-project')
-  return valor
+  return value
 }
 
 /**
  * Deletes the home a first start created and that never became a project. The directory exists only because
  * the child process made it (`bin/ultimate.ts` creates `ULTIMATE_HOME` before opening the core); if it died
- * before writing the `project.json`, that home is rubbish — and `listar` reads every directory under
+ * before writing the `project.json`, that home is rubbish — and `list` reads every directory under
  * `~/.ultimate/projects`, so it would appear for ever as a tile without a path. A `project.json`
  * written, or a live host holding the lock, mean that the project is real and nothing is touched.
  */
-async function descartarHome(home: string) {
-  const escrito = await readFile(join(home, 'project.json'), 'utf8').then(
+async function discardHome(home: string) {
+  const written = await readFile(join(home, 'project.json'), 'utf8').then(
     () => true,
     () => false,
   )
-  if (escrito) return
-  const dono = await lerLock(home)
-  if (dono && vivo(dono.pid)) return
+  if (written) return
+  const owner = await readLock(home)
+  if (owner && alive(owner.pid)) return
   await rm(home, { recursive: true, force: true })
 }
 
 /**
  * Brings a project's host up and only returns when the port answers; what does not come up in the
  * deadline is terminated and the error leaves with the tail of the log. A project that has no home yet
- * (`pastaNova`) writes the log in a temporary directory and only gains the pid's record after answering —
+ * (`newFolder`) writes the log in a temporary directory and only gains the pid's record after answering —
  * the home is the host's, not this extension's.
  */
-async function subir(
-  ctx: Contexto,
-  projeto: ProjetoDoHost,
-  options: { log: string; pastaNova?: boolean },
-): Promise<Projeto> {
-  const root = projeto.root
-  if (!root) throw new Error(`No path for ${projeto.name}`)
-  const port = await escolherPorta(portaLivre)
-  const child = lancar(
+async function bringUp(
+  ctx: Context,
+  project: HostProject,
+  options: { log: string; newFolder?: boolean },
+): Promise<Project> {
+  const root = project.root
+  if (!root) throw new Error(`No path for ${project.name}`)
+  const port = await choosePort(freePort)
+  const child = launch(
     process.execPath,
-    [programaDeInicio(ctx.host.ultimateRoot), ...argumentosDeInicio(root, port)],
-    { cwd: root, env: ambiente(projeto.home), log: options.log },
+    [startProgram(ctx.host.ultimateRoot), ...startArgs(root, port)],
+    { cwd: root, env: environment(project.home), log: options.log },
   )
   const pid = child.pid
-  let saida: string | undefined
-  child.once('error', (erro) => {
-    saida = `could not run ${process.execPath}: ${erro.message}`
+  let output: string | undefined
+  child.once('error', (error) => {
+    output = `could not run ${process.execPath}: ${error.message}`
   })
-  child.once('exit', (code, sinal) => {
-    saida ??= `the process exited (${sinal ?? `code ${code}`})`
+  child.once('exit', (code, signal) => {
+    output ??= `the process exited (${signal ?? `code ${code}`})`
   })
   // Without a pid the process was not even born, and the project's path is what usually is missing.
-  if (pid === undefined) throw new Error(`Could not start ${projeto.name} in ${root}`)
+  if (pid === undefined) throw new Error(`Could not start ${project.name} in ${root}`)
   // Written right after the spawn: the window between the two is the only case in which the host stays
   // without a record — and the worst it costs is one extra confirmation click (see README).
-  if (!options.pastaNova) await lembrar(projeto.home, pid, port)
+  if (!options.newFolder) await remember(project.home, pid, port)
   const url = `http://127.0.0.1:${port}`
-  const falha = await saude(url, () => saida)
+  const failure = await health(url, () => output)
   // The host that answers may not be ours: an earlier click, or another process, got there first.
-  const dono = await lerLock(projeto.home)
-  const outro = dono && dono.pid !== pid && vivo(dono.pid) ? dono : undefined
-  if (falha !== undefined && !outro) {
-    await encerrar(pid)
-    await esquecer(projeto.home, pid)
-    const resto = await cauda(options.log)
+  const owner = await readLock(project.home)
+  const other = owner && owner.pid !== pid && alive(owner.pid) ? owner : undefined
+  if (failure !== undefined && !other) {
+    await terminate(pid)
+    await forget(project.home, pid)
+    const tail = await logTail(options.log)
     // A folder that did not become a project cannot leave the home the process created behind.
-    if (options.pastaNova) await descartarHome(projeto.home)
+    if (options.newFolder) await discardHome(project.home)
     throw new Error(
-      `${projeto.name} did not answer on :${port} — ${falha}${resto ? `: ${resto}` : ''}`,
+      `${project.name} did not answer on :${port} — ${failure}${tail ? `: ${tail}` : ''}`,
     )
   }
   // The home exists now (whoever answers wrote the lock in it), and it is where this pid's record counts —
   // or does not.
-  if (dono?.pid === pid) await lembrar(projeto.home, pid, port)
-  else await esquecer(projeto.home, pid)
-  const emPe = outro ?? (dono?.pid === pid ? dono : undefined)
-  return montar({
-    ...projeto,
-    running: { pid: emPe?.pid ?? pid, url: emPe?.port ? `http://127.0.0.1:${emPe.port}` : url },
+  if (owner?.pid === pid) await remember(project.home, pid, port)
+  else await forget(project.home, pid)
+  const up = other ?? (owner?.pid === pid ? owner : undefined)
+  return toRow({
+    ...project,
+    running: { pid: up?.pid ?? pid, url: up?.port ? `http://127.0.0.1:${up.port}` : url },
   })
 }
 
 export const actions = {
   /**
    * This machine's projects, with the state and the command. With no argument, it measures each host that
-   * is up (it is what the phone's list shows); `{ medir: false }` is the rail's cheap read, which shows no
+   * is up (it is what the phone's list shows); `{ measure: false }` is the rail's cheap read, which shows no
    * number.
    */
-  async listar(args: JsonValue, ctx: Contexto): Promise<Secao> {
+  async list(args: JsonValue, ctx: Context): Promise<Section> {
     // A home without a `project.json` (a start that died before registering) is no project of anyone's:
     // it has no path, it is neither brought up nor measured — showing its tile would lie about the machine.
-    const projetos = (await ctx.host.projects()).filter((projeto) => projeto.root)
+    const projects = (await ctx.host.projects()).filter((project) => project.root)
     // The button at the bottom of the rail says the state read now, not the one from an earlier opening.
-    const splash = await splashAgora()
+    const splash = await splashNow()
     const at = new Date().toISOString()
-    if (!pediuMedida(args))
-      return { projetos: projetos.map((projeto) => montar(projeto)), at, splash }
-    const aqui: Medidas = { working: trabalhando(ctx), perguntasAbertas: await abertas(ctx) }
-    const linhas = await Promise.all(
-      projetos.map(async (projeto): Promise<Projeto> => {
+    if (!wantsMeasurement(args))
+      return { projects: projects.map((project) => toRow(project)), at, splash }
+    const here: Measurements = { working: workingNow(ctx), openQuestions: await countOpenQuestions(ctx) }
+    const lines = await Promise.all(
+      projects.map(async (project): Promise<Project> => {
         // This window's project: the measurements are this host's, with no trip at all.
-        if (projeto.current) return montar(projeto, aqui)
+        if (project.current) return toRow(project, here)
         // Stopped: there is no one to ask, and the screen shows the command in place of the measurement.
-        if (!projeto.running) return montar(projeto)
+        if (!project.running) return toRow(project)
         try {
-          return montar(projeto, await perguntar(projeto.running.url, ctx.signal))
-        } catch (erro) {
-          return montar(projeto, {
+          return toRow(project, await ask(project.running.url, ctx.signal))
+        } catch (error) {
+          return toRow(project, {
             working: null,
-            perguntasAbertas: null,
-            motivo: motivo(erro),
+            openQuestions: null,
+            reason: reason(error),
           })
         }
       }),
     )
-    return { projetos: linhas, at, splash }
+    return { projects: lines, at, splash }
   },
 
   /**
@@ -643,23 +643,23 @@ export const actions = {
    * the whole file, and the user would lose the other keys. The write is through a temporary and a
    * `rename`.
    */
-  async splash(args: JsonValue, _ctx: Contexto): Promise<Splash> {
-    const ligado = ligadoDoArgumento(args)
-    const path = settingsDoUsuario(usuario())
-    const lido = await lerSettings()
-    if (lido.erro) throw new Error(lido.erro)
+  async splash(args: JsonValue, _ctx: Context): Promise<Splash> {
+    const enabled = enabledArgument(args)
+    const path = userSettings(userHome())
+    const parsed = await readSettings()
+    if (parsed.error) throw new Error(parsed.error)
     // With no file, the starting point is an empty object: turning it off creates the file, turning it on
     // creates nothing.
-    const antes = lido.settings ?? {}
-    let depois: Record<string, unknown>
+    const before = parsed.settings ?? {}
+    let after: Record<string, unknown>
     try {
-      depois = ajustarSplash(antes, ligado)
-    } catch (erro) {
-      throw new Error(`Cannot change the splash: ${path}: ${motivo(erro)}. Nothing was written`)
+      after = adjustSplash(before, enabled)
+    } catch (error) {
+      throw new Error(`Cannot change the splash: ${path}: ${reason(error)}. Nothing was written`)
     }
-    // `ajustarSplash` returns the same object when nothing changes: nothing is rewritten for nothing.
-    if (depois !== antes) await escreverSettings(path, depois)
-    return { splash: ligado }
+    // `adjustSplash` returns the same object when nothing changes: nothing is rewritten for nothing.
+    if (after !== before) await writeSettings(path, after)
+    return { splash: enabled }
   },
 
   /**
@@ -667,18 +667,18 @@ export const actions = {
    * with the time — the tile's panel asks for this when it opens, and only it shows those numbers. A host
    * that does not answer returns `null` on both and the reason, never zero.
    */
-  async medir(args: JsonValue, ctx: Contexto): Promise<Medida> {
-    const projeto = await procurar(ctx, nomeDoArgumento(args))
+  async measure(args: JsonValue, ctx: Context): Promise<Measurement> {
+    const project = await findProject(ctx, nameArgument(args))
     const at = new Date().toISOString()
     // This window's project: the measurements are this host's, with no trip at all.
-    if (projeto.current)
-      return { working: trabalhando(ctx), perguntasAbertas: await abertas(ctx), at }
-    if (!projeto.running)
-      return { working: null, perguntasAbertas: null, motivo: 'the host is stopped', at }
+    if (project.current)
+      return { working: workingNow(ctx), openQuestions: await countOpenQuestions(ctx), at }
+    if (!project.running)
+      return { working: null, openQuestions: null, reason: 'the host is stopped', at }
     try {
-      return { ...(await perguntar(projeto.running.url, ctx.signal)), at }
-    } catch (erro) {
-      return { working: null, perguntasAbertas: null, motivo: motivo(erro), at }
+      return { ...(await ask(project.running.url, ctx.signal)), at }
+    } catch (error) {
+      return { working: null, openQuestions: null, reason: reason(error), at }
     }
   },
 
@@ -687,10 +687,10 @@ export const actions = {
    * answer. It is what another host of the machine asks to measure a tile; it never leaves here to ask
    * anyone else.
    */
-  async estado(_args: JsonValue, ctx: Contexto): Promise<Estado> {
+  async state(_args: JsonValue, ctx: Context): Promise<State> {
     return {
-      working: trabalhando(ctx),
-      perguntasAbertas: await abertas(ctx),
+      working: workingNow(ctx),
+      openQuestions: await countOpenQuestions(ctx),
       at: new Date().toISOString(),
     }
   },
@@ -699,59 +699,59 @@ export const actions = {
    * Brings a stopped project's host up, on the first free port; a host that already runs is not touched —
    * the row comes back as it is, and the tile's panel says on which port it is.
    */
-  async iniciar(args: JsonValue, ctx: Contexto): Promise<Projeto> {
-    const name = nomeDoArgumento(args)
-    const projeto = await procurar(ctx, name)
+  async start(args: JsonValue, ctx: Context): Promise<Project> {
+    const name = nameArgument(args)
+    const project = await findProject(ctx, name)
     // The guard is the live pid: a dead pid's lock is a stopped project, and it is the `undefined` here.
-    if (projeto.running) return montar(projeto)
-    if (projeto.current) throw new Error(`${name} runs this window`)
-    return subir(ctx, projeto, { log: join(projeto.home, LOG) })
+    if (project.running) return toRow(project)
+    if (project.current) throw new Error(`${name} runs this window`)
+    return bringUp(ctx, project, { log: join(project.home, LOG) })
   },
 
   /**
    * Creates a project from a folder: it expands `~`, demands a real directory, and brings its host up as
-   * `iniciar` does. A folder that is already a project of the list is selected — and, if it is stopped,
+   * `start` does. A folder that is already a project of the list is selected — and, if it is stopped,
    * brought up — instead of a second host for the same root. That project's first run, the onboarding and
    * its trust decision happen in its window: this extension decides nothing for it. The new project's home
    * is born with the host, not here.
    */
-  async criar(args: JsonValue, ctx: Contexto): Promise<ResultadoDaCriacao> {
-    const absoluto = caminhoAbsoluto(caminhoDoArgumento(args), homedir())
-    if (!absoluto) throw new Error('Enter a full path, such as ~/src/my-project')
-    const root = await realpath(absoluto).catch(() => undefined)
-    if (!root) throw new Error(`No such folder: ${absoluto}`)
+  async create(args: JsonValue, ctx: Context): Promise<CreateResult> {
+    const absolute = absolutePath(pathArgument(args), homedir())
+    if (!absolute) throw new Error('Enter a full path, such as ~/src/my-project')
+    const root = await realpath(absolute).catch(() => undefined)
+    if (!root) throw new Error(`No such folder: ${absolute}`)
     const info = await stat(root).catch(() => undefined)
     if (!info?.isDirectory()) throw new Error(`Not a folder: ${root}`)
-    const projetos = await ctx.host.projects()
-    const existente = projetos.find((projeto) => projeto.root === root)
-    if (existente) {
-      if (existente.running || existente.current)
-        return { criado: false, projeto: montar(existente) }
+    const projects = await ctx.host.projects()
+    const existing = projects.find((project) => project.root === root)
+    if (existing) {
+      if (existing.running || existing.current)
+        return { created: false, project: toRow(existing) }
       return {
-        criado: false,
-        projeto: await subir(ctx, existente, { log: join(existente.home, LOG) }),
+        created: false,
+        project: await bringUp(ctx, existing, { log: join(existing.home, LOG) }),
       }
     }
     // Two folders with the same project name cannot be told apart here: the actions speak by name, and a
     // second `app` would make the first's tile answer for the second (and stop it in its place).
-    const homonimo = projetos.find((projeto) => projeto.name === basename(root))
-    if (homonimo)
+    const namesake = projects.find((project) => project.name === basename(root))
+    if (namesake)
       throw new Error(
-        `A project called ${basename(root)} already exists (${homonimo.root ?? homonimo.home}); two projects with the same folder name cannot be told apart here`,
+        `A project called ${basename(root)} already exists (${namesake.root ?? namesake.home}); two projects with the same folder name cannot be told apart here`,
       )
     // New folder: the home is born with the host, so the log stays in a temporary directory until it
     // answers.
-    const temp = await mkdtemp(join(tmpdir(), 'ultimate-projetos-'))
+    const temp = await mkdtemp(join(tmpdir(), 'ultimate-projects-'))
     try {
-      const projeto: ProjetoDoHost = {
+      const project: HostProject = {
         name: basename(root),
         root,
-        home: homeDoProjeto(root, usuario()),
+        home: projectHome(root, userHome()),
         current: false,
       }
       return {
-        criado: true,
-        projeto: await subir(ctx, projeto, { log: join(temp, LOG), pastaNova: true }),
+        created: true,
+        project: await bringUp(ctx, project, { log: join(temp, LOG), newFolder: true }),
       }
     } finally {
       await rm(temp, { recursive: true, force: true })
@@ -760,29 +760,29 @@ export const actions = {
 
   /**
    * Brings a project's host down: only the pid of that project's lock, checking that the lock is gone. A
-   * host this extension did not bring up asks for confirmation — the action returns `precisaConfirmar`
+   * host this extension did not bring up asks for confirmation — the action returns `needsConfirm`
    * and nothing is touched until the same action arrives with `confirm: true`.
    */
-  async parar(args: JsonValue, ctx: Contexto): Promise<ResultadoDaParada> {
-    const name = nomeDoArgumento(args)
-    const confirmar =
+  async stop(args: JsonValue, ctx: Context): Promise<StopResult> {
+    const name = nameArgument(args)
+    const confirm =
       args && typeof args === 'object' && !Array.isArray(args)
         ? (args as { confirm?: unknown }).confirm === true
         : false
-    const projeto = await procurar(ctx, name)
-    if (projeto.current) throw new Error(`${name} runs this window: stop it from another window`)
-    const decisao = decisaoDeParada(projeto.running, await lembrado(projeto.home), confirmar)
-    if (decisao.acao === 'confirmar')
+    const project = await findProject(ctx, name)
+    if (project.current) throw new Error(`${name} runs this window: stop it from another window`)
+    const decision = stopDecision(project.running, await remembered(project.home), confirm)
+    if (decision.action === 'confirm')
       return {
-        parado: false,
-        precisaConfirmar: true,
-        pid: decisao.pid,
-        ...(projeto.running?.url ? { url: projeto.running.url } : {}),
+        stopped: false,
+        needsConfirm: true,
+        pid: decision.pid,
+        ...(project.running?.url ? { url: project.running.url } : {}),
       }
-    if (decisao.acao === 'parar') {
-      await desligar(projeto.home, decisao.pid)
-      await esquecer(projeto.home, decisao.pid)
+    if (decision.action === 'stop') {
+      await shutDown(project.home, decision.pid)
+      await forget(project.home, decision.pid)
     }
-    return { parado: true, projeto: montar(await procurar(ctx, name)) }
+    return { stopped: true, project: toRow(await findProject(ctx, name)) }
   },
 }

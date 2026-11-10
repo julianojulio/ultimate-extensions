@@ -1,5 +1,5 @@
-# O node_modules de cada extensão é um symlink para o clone do Ultimate (install.sh o cria):
-# é de máquina, com caminho absoluto, e não entra no repositório.
+# Each extension's node_modules is a symlink to the Ultimate clone (install.sh creates it):
+# it belongs to the machine, with an absolute path, and does not go into the repository.
 node_modules
 
 *.log

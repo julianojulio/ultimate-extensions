@@ -4,7 +4,7 @@
  */
 
 /** A project of the machine, as the rail shows it. */
-export interface Projeto {
+export interface Project {
   name: string
   /** The full path, which goes in the tile's panel. */
   root: string
@@ -17,24 +17,24 @@ export interface Projeto {
   running?: { pid: number; url: string }
   /**
    * Conversations working now. `undefined` when the measurement was not asked for (the rail's
-   * `listar`) or the host is stopped, and `null` when it is up and did not answer — the cases say
+   * `list`) or the host is stopped, and `null` when it is up and did not answer — the cases say
    * different things.
    */
   working?: number | null
   /** Questions of the panel without an answer in that host, with the same rule as `working`. */
-  perguntasAbertas?: number | null
+  openQuestions?: number | null
   /** Why it did not answer; it goes in the panel, not on the tile. */
-  motivo?: string
+  reason?: string
   /**
    * `ultimate <path>`, the command that brings the project up by hand. Shown and copied, never
    * executed.
    */
-  comando?: string
+  command?: string
 }
 
 /** The whole list and when it was read: the rail shows the time in the refresh button's panel. */
-export interface Secao {
-  projetos: Projeto[]
+export interface Section {
+  projects: Project[]
   at: string
   /**
    * The splash animation as **this machine's** settings leave it: it is what the button at the bottom
@@ -54,35 +54,35 @@ export interface Splash {
  * without an answer, the time of the measurement, and the reason when the host did not answer — never
  * a zero in place of the silence.
  */
-export interface Medida {
+export interface Measurement {
   working: number | null
-  perguntasAbertas: number | null
-  motivo?: string
+  openQuestions: number | null
+  reason?: string
   at: string
 }
 
 /** What a host answers about itself, when another host of the machine asks. */
-export interface Estado {
+export interface State {
   working: number
   /** Questions without an answer in this host; `null` when not even that was measured. */
-  perguntasAbertas: number | null
+  openQuestions: number | null
   at: string
 }
 
 /**
- * What the `criar` action did: it brought a host up for a new folder (`criado: true`) or selected
+ * What the `create` action did: it brought a host up for a new folder (`created: true`) or selected
  * the project that was already that folder — up, or coming up now —, without a second host for the
  * same root.
  */
-export interface ResultadoDaCriacao {
-  criado: boolean
-  projeto: Projeto
+export interface CreateResult {
+  created: boolean
+  project: Project
 }
 
 /**
- * What the `parar` action did: it stopped (and returns the new row), or it still asks for
+ * What the `stop` action did: it stopped (and returns the new row), or it still asks for
  * confirmation because that host was not started by this extension.
  */
-export type ResultadoDaParada =
-  | { parado: true; projeto: Projeto }
-  | { parado: false; precisaConfirmar: true; pid: number; url?: string }
+export type StopResult =
+  | { stopped: true; project: Project }
+  | { stopped: false; needsConfirm: true; pid: number; url?: string }

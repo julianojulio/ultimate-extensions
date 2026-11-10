@@ -13,11 +13,10 @@ again), the `+` (create a project) and the switch of the **splash animation** �
 line, the stopped ones below, and the bottom with ⟳, + and the splash
 switch](screenshots/rail.png)
 
-**Machine extension**: it lives in `~/.ultimate/extensions/projetos/` — a symlink to `projetos/` in the
-`ultimate-extensions` repository —, applies to every project on this machine and belongs to none of
-them. It uses the `shell.rail` slot, a full-height column beside the title bar and every surface
-(agent, system, review, memory); inside a frame Ultimate does not draw the rail and the extension does
-not appear.
+**Machine extension**: it lives in `~/.ultimate/extensions/projects/` — a symlink to this repository's
+`projects/` —, applies to every project on this machine and belongs to none of them. It uses the
+`shell.rail` slot, a full-height column beside the title bar and every surface (agent, system, review,
+memory); inside a frame Ultimate does not draw the rail and the extension does not appear.
 
 ## The rail
 
@@ -48,7 +47,7 @@ not appear.
 - **Running, and it is not this window** → the tile is an `<a href>`: one click opens that project **in
   this tab** (it is a project switcher, not a way to peek at them; ⌘/Ctrl+click opens a new tab, like
   any link).
-- **Stopped** → the tile is a `<button>`: one click brings the host up (the same spawn as `iniciar`),
+- **Stopped** → the tile is a `<button>`: one click brings the host up (the same spawn as `start`),
   and the tile shows a spinner while it comes up. Did it not come up? The tile gains a red ring with
   the error in the `title`, and the panel says the error — the last `Error:` line of the process log.
 - **This window** → `text-brand`, with the background tinted brand and no switch action: one click
@@ -60,7 +59,7 @@ not appear.
 
 ## The state on the tile
 
-![The tiles up close: AE with a green dot, GL with the dot pulsing and the number 1 in amber, RO with a green dot, SA with the hollow dot, SI with the green dot and the 9+ in amber, and NO with the grey dot](screenshots/estado.png)
+![The tiles up close: AE with a green dot, GL with the dot pulsing and the number 1 in amber, RO with a green dot, SA with the hollow dot, SI with the green dot and the 9+ in amber, and NO with the grey dot](screenshots/state.png)
 
 The 6px dot in the corner is the **app's own presence scheme** (the conversations' `AgentMark`):
 `size-1.5 rounded-full`, with the rail-coloured ring over it, and `data-presence` on the element. The
@@ -88,15 +87,15 @@ there —, so the rail and the sidebar speak the same visual language.
   `gta2xlwifi-lineage — running · 2 working · 1 unanswered question · measured at 21:53 — open it in this tab`. An
   indicator that ages is acceptable; one that lies is not — which is why it carries when it is from.
 - **When it measures:** on mounting the rail, on entering the rail with the pointer (**at most once
-  every 15 s**), on `⟳`, and after every action that changes the machine (`iniciar`, `parar`,
-  `criar`). The panel keeps measuring when it opens, and its measurement holds for that tile — it wins
+  every 15 s**), on `⟳`, and after every action that changes the machine (`start`, `stop`,
+  `create`). The panel keeps measuring when it opens, and its measurement holds for that tile — it wins
   over the wave's.
-- **There is no timer.** The read is the full `listar` action (each running host's `estado`, in
+- **There is no timer.** The read is the full `list` action (each running host's `state`, in
   parallel, with the 3 s deadline that already existed): a snapshot, with a time, not a clock.
 
 ## The tile panel
 
-![The tile panel: name, path, running :4811, 2 working · 1 question, the time of the measurement, and the buttons to copy the command and stop](screenshots/painel.png)
+![The tile panel: name, path, running :4811, 2 working · 1 question, the time of the measurement, and the buttons to copy the command and stop](screenshots/panel.png)
 
 It opens on **hover** and on **focus** (Tab up to the tile), and closes when the pointer or the focus
 leaves, or with `Esc`. It is `position: fixed`: it is not clipped when the column scrolls, and it stays
@@ -108,7 +107,7 @@ top to bottom:
 | the name and the path | `host.projects()` (the project home's `project.json`) |
 | `running` / `stopped`, and `:port` | that project's lock, re-read on every read |
 | `this window` | the project that serves this window |
-| `1 working · 1 question` | the `medir` action, asked **when the panel opens**, with the time beside it |
+| `1 working · 1 question` | the `measure` action, asked **when the panel opens**, with the time beside it |
 | `command` | copies `ultimate <path>`, with single quotes when the path asks for them |
 | `stop` | only on a running project that is not this window |
 
@@ -125,17 +124,17 @@ top to bottom:
   extension did not start** — born in a terminal, in a supervisor, by someone else — stops only after
   the panel asks, with the port and the pid in the text: `Stop the host on :4803 (pid 1234)? It was
   not started from here.` → `stop it` / `keep it`. The answer reaches the action as `confirm: true`;
-  without it, the action returns `precisaConfirmar` and touches nothing.
+  without it, the action returns `needsConfirm` and touches nothing.
 - An action error appears in the panel itself, in one to three lines (the whole text in the `title`).
 
 ## The `+`: create a project
 
-![A new project's dialog: a path field, with ~/src/my-project as the example](screenshots/novo-projeto.png)
+![A new project's dialog: a path field, with ~/src/my-project as the example](screenshots/new-project.png)
 
 A path field and a button. The path accepts `~` (the home of whoever is using it) and has to be
 **absolute**: empty, accidentally relative and `~other` are refused with a sentence, not with a guessed
 folder. The server checks that the folder exists and is a directory (`No such folder: …`,
-`Not a folder: …`) and then brings the host up as `iniciar` does: `ultimate <path>` on the first free
+`Not a folder: …`) and then brings the host up as `start` does: `ultimate <path>` on the first free
 port from **4747**, detached (`detached`, no tty), **without a window** (`--no-open`), with health being
 `GET /` on that port within **20 s** (not up in the deadline? the process is terminated and the dialog
 shows the last error line of its log).
@@ -152,7 +151,7 @@ shows the last error line of its log).
   name: a second `app` would make the first's tile answer for the second (and stop it in its place). So
   the `+` **refuses** the second outright, naming the project that already exists.
 - **A new project does not register itself by hand**: the central home (`~/.ultimate/projects/<name>-<8
-  hex of the path>`) is born with the host running in that folder, which is why `listar` already finds
+  hex of the path>`) is born with the host running in that folder, which is why `list` already finds
   it on the next read. The extension computes that home to pass `ULTIMATE_HOME` to the process — it is
   the same calculation as `server/project.ts:projectHome`, and it is the only point in this extension
   that depends on a detail of Ultimate; if it changes there, what breaks is the new project's tile
@@ -191,7 +190,7 @@ and off with one click:
   top** of this, because the project's layer wins over the user's. This button speaks about this
   machine's layer: with a project saying the opposite, it changes what is written in your file and the
   effect in that project remains the project's.
-- **The extension hot-loads**: the state the button shows comes from the column's read (`listar` returns
+- **The extension hot-loads**: the state the button shows comes from the column's read (`list` returns
   `splash`), never from a module variable — and `splash.enabled` in the host's extension list changes
   **without a restart**.
 
@@ -232,17 +231,17 @@ All four are mandatory, and each one was born from a way of lying:
 | the projects, the root, the pid and the URL | `host.projects()`: the homes of `~/.ultimate/projects`, with `running` only for those with a **live pid** in the lock | on opening the window, after every action, and on the refresh button |
 | the conversations working **in this** project | `host.conversations()`, the `busy` of this host's task graph | on the rail's wave, and when this tile's panel opens |
 | the questions without an answer **of this** project | the `messages` service (`openQuestions`), the same count as the questions panel | on the rail's wave, and when this tile's panel opens |
-| the same, **in another** project | `POST <url of the other host>/api/extensions/projetos/actions/estado`, on loopback, with the target's `Origin` — the same path `lib/remote.ts` uses to talk to another instance | on the rail's wave, and when that tile's panel opens |
+| the same, **in another** project | `POST <url of the other host>/api/extensions/projects/actions/state`, on loopback, with the target's `Origin` — the same path `lib/remote.ts` uses to talk to another instance | on the rail's wave, and when that tile's panel opens |
 
 Neither the `busy` nor another project's questions are anywhere on disk: the `conversations.json` each
 host publishes keeps neither the task graph nor the question box (on purpose). So the question goes to
-that project's own host, which answers about itself (`estado`) and **does not relay the question to
+that project's own host, which answers about itself (`state`) and **does not relay the question to
 anyone else**.
 
-The rail opens with `listar({ medir: false })`: the cheap read, without a trip to another host, which
-only says who is up (it is what draws the tiles). The **wave** is the full `listar()`, and it is what
+The rail opens with `list({ measure: false })`: the cheap read, without a trip to another host, which
+only says who is up (it is what draws the tiles). The **wave** is the full `list()`, and it is what
 lights the dot and the number: it goes out on mounting the rail, on entering the rail with the pointer
-(at most once every 15 s), on `⟳` and after every action that changes the machine. `listar()` with no
+(at most once every 15 s), on `⟳` and after every action that changes the machine. `list()` with no
 argument keeps measuring everyone (that is what the phone list shows, and what any caller from outside
 receives), now with `splash` among the fields.
 
@@ -250,17 +249,17 @@ receives), now with `splash` among the fields.
 
 In the home of a project that it started itself:
 
-- `<project home>/projetos-started.json` — `{ pid, port, at }`: the pid this extension started. It is
+- `<project home>/projects-started.json` — `{ pid, port, at }`: the pid this extension started. It is
   what lets `stop` know that host is its own, including after the extension itself reloads. A pid that
   does not match the lock's is read as "it was not me" and the panel asks. The file is deleted when the
   host stops.
-- `<project home>/projetos-start.log` — the output of the process that was started (the supervisor
+- `<project home>/projects-start.log` — the output of the process that was started (the supervisor
   writes the rest in `supervisor.log`); the error line in the panel comes from it.
 
-And, for a **new** project, a system temporary directory (`ultimate-projetos-…` in the temporary
+And, for a **new** project, a system temporary directory (`ultimate-projects-…` in the temporary
 directory) with the first start's log, deleted as soon as the action finishes — because a new project
 has no home yet. If the process dies before writing `project.json` (a port taken in the middle, a broken
-`.ultimate/`, an interrupted reset), the extension **deletes the home it created**, and `listar` also
+`.ultimate/`, an interrupted reset), the extension **deletes the home it created**, and `list` also
 ignores a home without `project.json`: a dead start never becomes a tile without a path.
 
 And **one** file outside those homes: this machine's `~/.ultimate/settings.json`, written by the splash
@@ -270,7 +269,7 @@ indentation and one line at the end, so the formatting from before is lost, but 
 
 **The two known limits, named:**
 
-- Between the `spawn` and the writing of `projetos-started.json` there is a window of milliseconds. If
+- Between the `spawn` and the writing of `projects-started.json` there is a window of milliseconds. If
   the extension restarts there, the process it started stays alive and unregistered — and the worst
   case is **one extra confirmation click**, not a lost process.
 - For a new project the record is written only **after** the host answers (before that there is no home
@@ -293,27 +292,27 @@ measurement it shows is from.
 
 ## The actions
 
-- `listar` — `{}` (or no argument): this machine's projects with state, port and command, measuring
-  every running host. `{ medir: false }`: the same list **without** measurement and without a trip to
+- `list` — `{}` (or no argument): this machine's projects with state, port and command, measuring
+  every running host. `{ measure: false }`: the same list **without** measurement and without a trip to
   another host — it is the rail's read.
-- `medir` — `{ name }`. What was measured in that project now: `{ working, perguntasAbertas, motivo?, at }`.
+- `measure` — `{ name }`. What was measured in that project now: `{ working, openQuestions, reason?, at }`.
   It is what the tile panel asks for when it opens.
-- `estado` — no arguments. Only this host: `{ working, perguntasAbertas, at }`. It is what another host
+- `state` — no arguments. Only this host: `{ working, openQuestions, at }`. It is what another host
   asks; it never leaves here to ask anyone else.
-- `iniciar` — `{ name }`. Brings that project's host up and only returns when the port answers; returns
+- `start` — `{ name }`. Brings that project's host up and only returns when the port answers; returns
   the new line. A project that already runs comes back as it is.
-- `criar` — `{ caminho }`. Expands `~`, checks the folder and brings its host up; returns
-  `{ criado, projeto }`. A project that is already that folder is selected (or started, if it was
+- `create` — `{ path }`. Expands `~`, checks the folder and brings its host up; returns
+  `{ created, project }`. A project that is already that folder is selected (or started, if it was
   stopped), never duplicated.
-- `parar` — `{ name, confirm? }`. Brings that project's host down and checks that the lock is gone;
-  returns `{ parado: true, projeto }`, or `{ parado: false, precisaConfirmar: true, pid, url }` when the
+- `stop` — `{ name, confirm? }`. Brings that project's host down and checks that the lock is gone;
+  returns `{ stopped: true, project }`, or `{ stopped: false, needsConfirm: true, pid, url }` when the
   host was not started by this extension and the `confirm: true` is still missing.
 - `splash` — `{ enabled: boolean }`. Turns the splash animation on or off in this machine's settings and
-  returns `{ splash }`; `listar` also returns `splash`, which is where the bottom button reads the state
+  returns `{ splash }`; `list` also returns `splash`, which is where the bottom button reads the state
   from. It refuses, without writing, the file the core would refuse whole.
 
-`estado`, `iniciar` and `parar` continue exactly as they were: they are the API another host on this
-machine calls, and the rail has only started using `listar` with `medir: false`, the `medir` action and
+`state`, `start` and `stop` continue exactly as they were: they are the API another host on this
+machine calls, and the rail has only started using `list` with `measure: false`, the `measure` action and
 the `splash` action.
 
 ## What remains out
@@ -338,8 +337,8 @@ the `splash` action.
   `~/.ultimate/projects` (a preview, a scratch server) does not appear in it — and such a project can be
   created again with the `+` as if it were new, because to this extension it is.
 - **It does not tell two projects with the same folder name apart.** The actions speak by project name:
-  with two `app` on the machine, the first (by home) is the one that answers `iniciar`, `parar` and
-  `medir` — including when the tile and the panel you click are the second's. The `+` refuses to create
+  with two `app` on the machine, the first (by home) is the one that answers `start`, `stop` and
+  `measure` — including when the tile and the panel you click are the second's. The `+` refuses to create
   the second, and each tile's panel shows the whole path, so that one knows which is which.
 - **It does not reach another machine**: only what runs on this one, on loopback.
 - **It does not clean an orphan lock**: if a host only stopped with `SIGKILL`, its lock stays (with a
@@ -358,8 +357,8 @@ The interface speaks **English**, like the rest of Ultimate (`New project`, `run
 ## Tests
 
 ```sh
-cd ~/src/ultimate-extensions/projetos
-node --test projetos.test.ts
+cd ~/src/ultimate-extensions/projects
+node --test projects.test.ts
 ```
 
 26 pure tests, with fixtures: the words of the state; the link's port (and the URL without a port); the

@@ -1,6 +1,6 @@
 # `.ultimate/` — what this project asks of Ultimate
 
-This repository's extensions do not live here: they live at the first level (`projetos/`,
+This repository's extensions do not live here: they live at the first level (`projects/`,
 `rate-limiter/`) and are linked into the machine by `install.sh`. This folder is the configuration
 Ultimate works with **in this repository**, and it applies to anyone who runs `ultimate` in this
 folder.
