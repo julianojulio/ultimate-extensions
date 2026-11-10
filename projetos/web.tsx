@@ -176,7 +176,7 @@ function Coluna() {
       data-projects-rail
       onPointerEnter={() => void lerOnda()}
     >
-      <div className="flex w-full min-h-0 flex-1 flex-col items-center gap-1 overflow-y-auto">
+      <div className="flex w-full min-h-0 flex-1 flex-col items-center gap-2 overflow-y-auto">
         {error ? (
           <button
             aria-label="The projects could not be read. Measure again"
@@ -655,7 +655,7 @@ function Sinais({ ponto, perguntas }: { ponto: Presenca; perguntas: string | und
       {perguntas && (
         <span
           aria-hidden="true"
-          className="absolute -top-0.5 -right-0.5 flex h-3 min-w-3 items-center justify-center rounded-full bg-amber-400 px-0.5 font-mono text-[8px] leading-none font-medium tabular-nums text-amber-950 ring-[1.5px] ring-sidebar"
+          className="absolute -top-1 -right-1 flex h-3 min-w-3 items-center justify-center rounded-full bg-amber-400 px-1 font-mono text-[8px] leading-none font-semibold tabular-nums text-amber-950 ring-[1.5px] ring-sidebar"
           data-questions={perguntas}
         >
           {perguntas}

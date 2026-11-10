@@ -22,7 +22,7 @@ rail e a extensão não aparece.
 ```
 ┌──┐
 │AE●│  ← esta janela: text-brand, ponto verde (ocioso), e o clique só abre o painel
-│①GL│  ← de pé e trabalhando: o ponto pulsa (brand); o ① no canto é uma pergunta sem resposta
+│GL●│  ← de pé e trabalhando: o ponto pulsa (brand); o ① no canto de cima é uma pergunta
 │RO●│  ← de pé e ocioso: ponto verde
 │SA○│  ← de pé e sem resposta: ponto vazado, sem pulso e sem amarelo
 │──│  ← uma linha fina separa os de pé dos parados
@@ -56,7 +56,7 @@ rail e a extensão não aparece.
 
 ## O estado no tile
 
-![Os tiles de perto: AE com ponto verde, GL com o ponto pulsando e o número 1 em âmbar, RO com ponto verde, SA com o ponto vazado, e NO com o ponto cinza](screenshots/estado.png)
+![Os tiles de perto: AE com ponto verde, GL com o ponto pulsando e o número 1 em âmbar, RO com ponto verde, SA com o ponto vazado, SI com o ponto verde e o 9+ em âmbar, e NO com o ponto cinza](screenshots/estado.png)
 
 O ponto de 6px do canto é o **mesmo esquema de presença do app** (o `AgentMark` das conversas):
 `size-1.5 rounded-full`, com o anel da cor do rail por cima, e `data-presence` no elemento. As classes
@@ -71,6 +71,10 @@ a sidebar falam a mesma língua visual.
 | ponto **vazado** (só o anel) | de pé e **sem resposta** no prazo de 3 s: o tile diz `unavailable` com o motivo |
 | **número em âmbar** no canto de cima | há pergunta sem resposta; `1`..`9`, e `9+` de dez para cima. Em zero não aparece |
 
+- **O número não cobre as iniciais.** Ele fica no canto de cima à direita, no vão entre os tiles — que
+  por isso são espaçados de 8px —, com o anel da cor do rail separando ele do fundo. Um `9+` acima de
+  dez é o limite: o número exato de 42 perguntas não muda a decisão de quem olha o rail, e um número
+  largo demais esconderia o nome do projeto.
 - **Sem resposta não é ocioso.** Um host de pé que não respondeu dentro do prazo fica sem pulso e sem
   amarelo, com o ponto vazado — o silêncio de um host travado não pode ser lido como calma.
 - **Zero é medida.** `0 working` é uma resposta, e é ela que deixa o ponto verde. O que não se mediu
