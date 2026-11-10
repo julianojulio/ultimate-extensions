@@ -27,7 +27,7 @@ projects' homes), not about anyone's product. **What does not**: a project's UI 
 ### `projetos` — the rail of this machine's projects
 
 **What it solves:** with more than one project open on this machine, switching from one to the other
-and answering «where is something happening right now» without a window or a terminal: a 48px
+and answering "where is something happening right now" without a window or a terminal: a 48px
 **rail** on the left edge of the window, present on every surface, with one initials tile per project
 — running hosts on top, stopped ones below —, the whole block as the click target, the port number
 off-screen and, in the corner of each tile, the app's **presence dot**: grey stopped, green idle,
@@ -35,7 +35,7 @@ pulsing while it works, and the number of unanswered questions in amber. A runni
 that project in this tab; a stopped one comes up; the tile panel (hover or focus) gives the port, the
 state in words, how many conversations of that project are working and how many questions wait for
 an answer, measured at the moment the panel opens, with the time; the `+` creates a project from a
-folder; and the switch at the foot of the rail turns the **splash animation** on and off, writing only
+folder; and the switch at the bottom of the rail turns the **splash animation** on and off, writing only
 that entry in this machine's settings. On the phone there is no rail: the sidebar drawer keeps the
 compact list, with the measurements.
 
@@ -132,9 +132,9 @@ ultimate-extensions/
 │   ├── server.ts        # actions: listar, medir, estado, iniciar, criar, parar, splash
 │   ├── projetos.ts      # the pure calculations (initials, groups, presence, path, port, stop, splash)
 │   ├── tipos.ts         # what the actions return
-│   ├── web.tsx          # the rail, the tile panel, the + dialog, the phone list and the foot
+│   ├── web.tsx          # the rail, the tile panel, the + dialog, the phone list and the bottom
 │   ├── projetos.test.ts
-│   └── screenshots/     # rail, state, foot, panel and a new project's dialog
+│   └── screenshots/     # rail, state, bottom, panel and a new project's dialog
 └── rate-limiter/       # simultaneous request cap per provider
     ├── README.md
     ├── server.ts        # wraps the provider stream; action: status

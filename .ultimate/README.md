@@ -9,7 +9,7 @@ folder.
 
 | File | What it does |
 | --- | --- |
-| `settings.json` | Both `node --test` run as a check of every landing (`lander.checks`), and `isolates.worktree.setup` calls the script below in every new checkout. The checks in `lander.checks` and `lander.push` only apply once this project's setup card is accepted: until then a landing merges and fast-forwards locally and nothing is pushed. |
+| `settings.json` | A landing's checks (`lander.checks`, both `node --test`), its push to `origin` (`lander.push`), and `isolates.worktree.setup`, which calls the script below in every new checkout. None of it applies until this project's setup card is accepted: until then a landing merges and fast-forwards locally, with no checks and nothing pushed. |
 | `worktree-setup.sh` | Links each extension's `node_modules` inside the worktree: git ignores it, so a new checkout cannot run the tests without that link. Same target as `install.sh` (the Ultimate clone's `node_modules`), and it does not touch the machine's symlinks. |
 | `agents/reviewer-extension.md` | One more reviewer on the team: it checks the change against Ultimate's extension guide (the `@/sdk` contract, honesty of what the UI shows, pure testable logic, README) instead of looking only at the behaviour. The built-in `reviewer` starts it along with the others and joins the reports. |
 
