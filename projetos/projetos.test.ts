@@ -1,27 +1,36 @@
 /**
- * As contas puras da seção “Projetos” contra fixtures: nenhum teste aqui lê a máquina, abre processo
- * ou faz requisição — são as funções de `projetos.ts` e o que a linha promete mostrar.
+ * As contas puras do rail “Projetos” contra fixtures: nenhum teste aqui lê a máquina, abre processo
+ * ou faz requisição — são as funções de `projetos.ts` e o que o rail promete mostrar.
  *
  * O que importa fixar:
  *
- * - o estado vem escrito, não só na cor: `running` e `stopped` são palavras;
- * - a porta do link sai da URL do host, e uma URL sem porta não inventa uma;
+ * - o estado vem escrito, não só na cor: `running` e `stopped` são palavras no popover do tile, e o
+ *   grupo é a posição no rail;
+ * - o tile não mostra porta: o rótulo é só letras (`iniciais`), e a porta vive no href do link;
  * - a contagem e o contador de perguntas vêm de um número medido: sem medida não é `0`, é
  *   `unavailable` — o zero inventado é o pior erro possível, porque faz ignorar o projeto travado;
  * - o host se sobe na primeira porta livre a partir de 4747, sem abrir janela;
  * - o botão de parar só mata o que ele mesmo subiu; o resto pede confirmação, e um lock de pid morto
- *   não é um host (não há nada a parar, e o botão sobe);
+ *   não é um host (não há nada a parar, e o clique sobe);
  * - o comando copiado é o comando que roda (`ultimate <caminho>`), com aspas quando o caminho pede —
- *   e nunca é executado por esta extensão.
+ *   e nunca é executado por esta extensão;
+ * - a pasta do diálogo do `+` vira caminho absoluto com `~` expandido, e um caminho relativo é recusado
+ *   em vez de virar alguma pasta ao acaso;
+ * - o home de um projeto novo é o mesmo que o Ultimate calcula (`<home>/.ultimate/projects/<nome>-<8>`).
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   argumentosDeInicio,
+  caminhoAbsoluto,
   comando,
   contagem,
   decisaoDeParada,
   escolherPorta,
+  grupos,
+  homeDoProjeto,
+  iniciais,
+  linkDo,
   medido,
   palavra,
   perguntas,
@@ -119,6 +128,98 @@ test('a linha de um projeto parado mostra o comando que se copia, e nenhuma medi
   assert.equal(parado.working, undefined)
   assert.equal(parado.perguntasAbertas, undefined)
   assert.equal(comando(parado.root), parado.comando)
+})
+
+test('o tile mostra iniciais, em duas letras', () => {
+  assert.equal(iniciais('app_evangelho'), 'AE')
+  assert.equal(iniciais('gta2xlwifi-lineage'), 'GL')
+  assert.equal(iniciais('robsoncosta'), 'RO')
+  // Espaço, ponto e hífen separam igual: duas palavras dão a primeira letra de cada uma.
+  assert.equal(iniciais('my project'), 'MP')
+  assert.equal(iniciais('ultra.js'), 'UJ')
+  // Uma palavra só dá as duas primeiras letras; uma letra só é uma letra.
+  assert.equal(iniciais('worktrees'), 'WO')
+  assert.equal(iniciais('x'), 'X')
+  // Palavras vazias (só separadores) não viram letra nenhuma.
+  assert.equal(iniciais('--'), '')
+})
+
+test('o tile não carrega a porta: o rótulo é letra e a porta vive no href', () => {
+  const projeto = depe(1)
+  // O que se desenha no bloco: nada de número, nada de endereço.
+  assert.equal(iniciais(projeto.name), 'GL')
+  assert.doesNotMatch(iniciais(projeto.name), /\d/)
+  // O que o clique abre: a URL inteira, com a porta.
+  assert.equal(linkDo(projeto), 'http://127.0.0.1:4748')
+  assert.match(linkDo(projeto) ?? '', /:4748$/)
+  // Parado não tem link: o clique é outra ação (subir), não uma viagem a um endereço que não atende.
+  assert.equal(linkDo(parado), undefined)
+})
+
+test('o rail agrupa: rodando em cima, parados embaixo, o desta janela primeiro', () => {
+  const listar = (projetos: Projeto[]) => grupos(projetos)
+  const { rodando, parados } = listar([
+    { name: 'zulu', root: '/z', current: false, running: { pid: 1, url: 'http://127.0.0.1:4750' } },
+    parado,
+    { name: 'alfa', root: '/a', current: false, running: { pid: 2, url: 'http://127.0.0.1:4749' } },
+    { name: 'esta-janela', root: '/e', current: true, running: { pid: 3, url: 'http://127.0.0.1:4747' } },
+    { name: 'beta', root: '/b', current: false },
+  ])
+  // O projeto desta janela abre a coluna; o resto dos que rodam vem por nome.
+  assert.deepEqual(
+    rodando.map((projeto) => projeto.name),
+    ['esta-janela', 'alfa', 'zulu'],
+  )
+  assert.deepEqual(
+    parados.map((projeto) => projeto.name),
+    ['beta', 'robsoncosta'],
+  )
+  // Um projeto que só tem medida não está de pé: sem `running` ele é parado, e o clique sobe o host.
+  const soMedida = listar([{ name: 'medido', root: '/m', current: false, working: 0 }])
+  assert.deepEqual(soMedida.rodando, [])
+  assert.deepEqual(
+    soMedida.parados.map((projeto) => projeto.name),
+    ['medido'],
+  )
+  // Sem projeto nenhum os dois grupos são vazios, e o rail ainda tem o `+`.
+  assert.deepEqual(listar([]), { rodando: [], parados: [] })
+})
+
+test('o caminho do diálogo expande ~ e recusa o que não é absoluto', () => {
+  const home = '/home/juliano'
+  assert.equal(caminhoAbsoluto('~/src/novo', home), '/home/juliano/src/novo')
+  assert.equal(caminhoAbsoluto('/srv/app', home), '/srv/app')
+  assert.equal(caminhoAbsoluto('~', home), '/home/juliano')
+  // Espaço em volta é do usuário, não do caminho.
+  assert.equal(caminhoAbsoluto('  ~/src/novo  ', home), '/home/juliano/src/novo')
+  // `.` e `..` resolvem: o caminho que se sobe é o que o diálogo mostra.
+  assert.equal(caminhoAbsoluto('~/src/../outro', home), '/home/juliano/outro')
+  // Vazio e relativo não são caminho: o diálogo pede um em vez de adivinhar uma pasta.
+  assert.equal(caminhoAbsoluto('', home), undefined)
+  assert.equal(caminhoAbsoluto('   ', home), undefined)
+  assert.equal(caminhoAbsoluto('src/novo', home), undefined)
+  assert.equal(caminhoAbsoluto('./novo', home), undefined)
+  // `~outro` não é o home de quem digita: nada de expandir o nome de outra pessoa.
+  assert.equal(caminhoAbsoluto('~outro/src', home), undefined)
+})
+
+test('o home de um projeto novo é <home>/.ultimate/projects/<nome>-<8 hex>', () => {
+  assert.equal(
+    homeDoProjeto('/home/juliano/src/novo', '/home/juliano'),
+    '/home/juliano/.ultimate/projects/novo-3f75ea87',
+  )
+  // Mesma pasta, mesmo home: é o cálculo que faz o tile aparecer sozinho depois de subir.
+  assert.equal(
+    homeDoProjeto('/home/juliano/src/novo', '/home/juliano'),
+    homeDoProjeto('/home/juliano/src/novo', '/home/juliano'),
+  )
+  // Pastas diferentes com o mesmo nome não colidem: o hash é da raiz.
+  assert.notEqual(
+    homeDoProjeto('/a/novo', '/home/juliano'),
+    homeDoProjeto('/b/novo', '/home/juliano'),
+  )
+  // O home do usuário entra inteiro, inclusive quando é um home de testes.
+  assert.match(homeDoProjeto('/a/novo', '/tmp/h'), /^\/tmp\/h\/\.ultimate\/projects\/novo-[0-9a-f]{8}$/)
 })
 
 test('o host se sobe no projeto, na porta escolhida e sem abrir janela', () => {

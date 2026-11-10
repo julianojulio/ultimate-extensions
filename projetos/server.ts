@@ -1,29 +1,33 @@
 /**
- * O servidor da seção “Projetos”: lê a máquina, pergunta aos outros hosts o que só eles sabem, e sobe
- * ou deita um host quando alguém clica no botão.
+ * O servidor do rail “Projetos”: lê a máquina, pergunta aos outros hosts o que só eles sabem, e sobe,
+ * deita ou cria um host quando alguém clica num tile, no popover ou no `+`.
  *
  * O código mora no repositório das extensões de máquina, `~/src/ultimate-extensions/projetos`; o que
  * o Ultimate carrega é o symlink `~/.ultimate/extensions/projetos`, feito pelo `install.sh` de lá.
  * Editar é no repositório, e a recarga a quente acompanha o link.
  *
  * `listar` mostra os projetos da máquina (`host.projects()`: os homes centrais de
- * `~/.ultimate/projects`, com a URL de quem está de pé) e, para cada um, quantas conversas estão
- * trabalhando e quantas perguntas esperam resposta **naquele** host. Nem o `busy` nem as perguntas de
- * outro projeto estão em lugar nenhum do disco — a lista de conversas que cada host publica não guarda
- * o grafo de tarefas nem a caixa de perguntas —, então a pergunta vai por HTTP ao próprio host
- * daquele projeto, em loopback, e ele responde de si mesmo (`estado`). Loopback com a `Origin` do alvo
- * é o mesmo caminho que `lib/remote.ts` usa para falar com outra instância.
+ * `~/.ultimate/projects`, com a URL de quem está de pé). O rail chama `listar({ medir: false })`: sem
+ * viagem a outro host, porque um tile não mostra número. As medidas (`1 working · 1 question`) só
+ * existem no popover de um tile, e são da ação `medir`, que pergunta **àquele** host quando o popover
+ * abre. Nem o `busy` nem as perguntas de outro projeto estão em lugar nenhum do disco — a lista de
+ * conversas que cada host publica não guarda o grafo de tarefas nem a caixa de perguntas —, então a
+ * pergunta vai por HTTP ao próprio host daquele projeto, em loopback, e ele responde de si mesmo
+ * (`estado`). Loopback com a `Origin` do alvo é o mesmo caminho que `lib/remote.ts` usa para falar com
+ * outra instância. `listar()` sem argumento continua medindo todo mundo: é o que a lista do celular
+ * mostra e o que qualquer outro host que chame a ação recebe.
  *
- * As duas ações que mexem na máquina seguem quatro regras, e são todas obrigatórias:
+ * As três ações que mexem na máquina (`iniciar`, `parar`, `criar`) seguem quatro regras, e são todas
+ * obrigatórias:
  *
- * 1. **A guarda é o pid vivo, nunca o arquivo.** Um lock de pid morto é um projeto parado e o botão
- *    sobe; um lock de pid vivo é «já roda em :N» e o botão não faz nada.
+ * 1. **A guarda é o pid vivo, nunca o arquivo.** Um lock de pid morto é um projeto parado e o clique
+ *    sobe; um lock de pid vivo é «já roda em :N» e o clique não faz nada.
  * 2. **O host nasce destacado** (`spawn` com `detached`, sem tty): um filho do host que o subiu
  *    morreria no reinício deste.
  * 3. **A porta é a primeira livre a partir de 4747, e a resposta é a saúde.** Só se devolve o link
- *    quando a porta responde; o que não sobe no prazo é encerrado, e o erro vai para a linha.
+ *    quando a porta responde; o que não sobe no prazo é encerrado, e o erro vai para o popover.
  * 4. **Parar mata só o pid do lock daquele projeto** e confere que o lock sumiu: nada de `pkill`,
- *    nada de matar por porta. Um host que esta extensão não subiu pede confirmação no texto.
+ *    nada de matar por porta. Um host que esta extensão não subiu pede confirmação no popover.
  *
  * O estado verdadeiro é sempre o lock relido, nunca uma lista em memória: a extensão pode recarregar
  * entre uma ação e outra. Não há poll — a tela lê ao abrir e de novo no botão de atualizar.
@@ -31,21 +35,31 @@
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import { closeSync, openSync } from 'node:fs'
-import { readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
-import { join } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
+import { basename, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
 import type { JsonValue } from '@earendil-works/chord'
 import { defineExtension } from '@earendil-works/pi-durable'
 import {
   argumentosDeInicio,
+  caminhoAbsoluto,
   comando,
   decisaoDeParada,
   escolherPorta,
+  homeDoProjeto,
   programaDeInicio,
 } from './projetos.ts'
-import type { Estado, Projeto, ResultadoDaParada, Secao } from './tipos.ts'
+import type {
+  Estado,
+  Medida,
+  Projeto,
+  ResultadoDaCriacao,
+  ResultadoDaParada,
+  Secao,
+} from './tipos.ts'
 
 export default defineExtension({ name: 'projetos' })
 
@@ -238,17 +252,24 @@ async function esquecer(home: string, pid: number | undefined) {
   if ((await lembrado(home)) === pid) await rm(join(home, REGISTO), { force: true })
 }
 
+/** O ambiente do home do usuário, como o harness o resolve: `ULTIMATE_USER_HOME` quando há (uma prévia
+ * isolada, um home de testes), senão o do sistema. É dele que saem os projetos e as settings. */
+function usuario(): string {
+  return process.env.ULTIMATE_USER_HOME ?? homedir()
+}
+
 /** O ambiente do host que se sobe: a identidade deste host não vale para outro projeto. */
 function ambiente(home: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     ULTIMATE_HOME: home,
+    // O filho lê o mesmo `~/.ultimate` deste host — numa prévia isolada, a cópia privada, não a do sistema.
+    ULTIMATE_USER_HOME: usuario(),
     ULTIMATE_NO_OPEN: '1',
   }
   for (const nome of [
     'ULTIMATE_PORT',
     'ULTIMATE_PROJECT',
-    'ULTIMATE_USER_HOME',
     'ULTIMATE_SUPERVISED',
     'ULTIMATE_GENERATION',
     'ULTIMATE_PREVIOUS_BUILD',
@@ -296,9 +317,9 @@ async function saude(url: string, saiu: () => string | undefined): Promise<strin
   }
 }
 
-/** A linha do log do host que se subiu que diz por que ele não subiu, para a linha do projeto. */
-async function cauda(home: string): Promise<string> {
-  const texto = await readFile(join(home, LOG), 'utf8').catch(() => '')
+/** A linha do log do host que se subiu que diz por que ele não subiu, para o popover do tile. */
+async function cauda(log: string): Promise<string> {
+  const texto = await readFile(log, 'utf8').catch(() => '')
   const linhas = texto
     .split('\n')
     .map((linha) => linha.trim())
@@ -377,10 +398,86 @@ function portaLivre(port: number): Promise<boolean> {
   })
 }
 
+/** A ação pediu medida? O rail chama `listar({ medir: false })`: nenhum número aparece num tile. */
+function pediuMedida(args: JsonValue): boolean {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return true
+  return (args as { medir?: unknown }).medir !== false
+}
+
+/** O caminho que o diálogo do `+` mandou, como texto: vazio não é caminho, e o diálogo pede um. */
+function caminhoDoArgumento(args: JsonValue): string {
+  const valor =
+    args && typeof args === 'object' && !Array.isArray(args)
+      ? (args as { caminho?: unknown }).caminho
+      : undefined
+  if (typeof valor !== 'string' || !valor.trim())
+    throw new Error('Enter a folder path, such as ~/src/my-project')
+  return valor
+}
+
+/**
+ * Sobe o host de um projeto e só devolve quando a porta responde; o que não sobe no prazo é encerrado
+ * e o erro sai com a cauda do log. Um projeto que ainda não tem home (`pastaNova`) escreve o log num
+ * diretório temporário e só ganha o registo do pid depois de responder — o home é do host, não desta
+ * extensão.
+ */
+async function subir(
+  ctx: Contexto,
+  projeto: ProjetoDoHost,
+  options: { log: string; pastaNova?: boolean },
+): Promise<Projeto> {
+  const root = projeto.root
+  if (!root) throw new Error(`No path for ${projeto.name}`)
+  const port = await escolherPorta(portaLivre)
+  const child = lancar(
+    process.execPath,
+    [programaDeInicio(ctx.host.ultimateRoot), ...argumentosDeInicio(root, port)],
+    { cwd: root, env: ambiente(projeto.home), log: options.log },
+  )
+  const pid = child.pid
+  if (pid === undefined) throw new Error(`Could not start ${projeto.name}`)
+  let saida: string | undefined
+  child.once('error', (erro) => {
+    saida = `could not run ${process.execPath}: ${erro.message}`
+  })
+  child.once('exit', (code, sinal) => {
+    saida ??= `the process exited (${sinal ?? `code ${code}`})`
+  })
+  // Gravado logo depois do spawn: a janela entre um e outro é o único caso em que o host fica sem
+  // registo — e o pior que isso custa é um clique de confirmação a mais (ver README).
+  if (!options.pastaNova) await lembrar(projeto.home, pid, port)
+  const url = `http://127.0.0.1:${port}`
+  const falha = await saude(url, () => saida)
+  // O host que atende pode não ser o nosso: um clique anterior, ou outro processo, chegou primeiro.
+  const dono = await lerLock(projeto.home)
+  const outro = dono && dono.pid !== pid && vivo(dono.pid) ? dono : undefined
+  if (falha !== undefined && !outro) {
+    await encerrar(pid)
+    await esquecer(projeto.home, pid)
+    const resto = await cauda(options.log)
+    throw new Error(
+      `${projeto.name} did not answer on :${port} — ${falha}${resto ? `: ${resto}` : ''}`,
+    )
+  }
+  // O home existe agora (quem atende escreveu o lock nele), e é onde o registo deste pid vale — ou não.
+  if (dono?.pid === pid) await lembrar(projeto.home, pid, port)
+  else await esquecer(projeto.home, pid)
+  const emPe = outro ?? (dono?.pid === pid ? dono : undefined)
+  return montar({
+    ...projeto,
+    running: { pid: emPe?.pid ?? pid, url: emPe?.port ? `http://127.0.0.1:${emPe.port}` : url },
+  })
+}
+
 export const actions = {
-  /** Os projetos da máquina, cada um com o estado, as medidas e o comando. Sem argumentos. */
-  async listar(_args: JsonValue, ctx: Contexto): Promise<Secao> {
+  /**
+   * Os projetos da máquina, com o estado e o comando. Sem argumento, mede cada host de pé (é o que a
+   * lista do celular mostra); `{ medir: false }` é a leitura barata do rail, que não mostra número.
+   */
+  async listar(args: JsonValue, ctx: Contexto): Promise<Secao> {
     const projetos = await ctx.host.projects()
+    if (!pediuMedida(args))
+      return { projetos: projetos.map((projeto) => montar(projeto)), at: new Date().toISOString() }
     const aqui: Medidas = { working: trabalhando(ctx), perguntasAbertas: await abertas(ctx) }
     const linhas = await Promise.all(
       projetos.map(async (projeto): Promise<Projeto> => {
@@ -403,8 +500,28 @@ export const actions = {
   },
 
   /**
+   * O que se mediu num projeto agora: as conversas trabalhando e as perguntas sem resposta, com a hora
+   * — o popover do tile pede isto quando abre, e só ele mostra esses números. Um host que não responde
+   * devolve `null` nos dois e o motivo, nunca zero.
+   */
+  async medir(args: JsonValue, ctx: Contexto): Promise<Medida> {
+    const projeto = await procurar(ctx, nomeDoArgumento(args))
+    const at = new Date().toISOString()
+    // O projeto desta janela: as medidas são as deste host, sem viagem nenhuma.
+    if (projeto.current)
+      return { working: trabalhando(ctx), perguntasAbertas: await abertas(ctx), at }
+    if (!projeto.running)
+      return { working: null, perguntasAbertas: null, motivo: 'the host is stopped', at }
+    try {
+      return { ...(await perguntar(projeto.running.url, ctx.signal)), at }
+    } catch (erro) {
+      return { working: null, perguntasAbertas: null, motivo: motivo(erro), at }
+    }
+  },
+
+  /**
    * Só este host: quantas conversas dele estão trabalhando agora e quantas perguntas esperam resposta.
-   * É o que outro host da máquina pergunta para montar a seção; nunca sai daqui para perguntar a mais
+   * É o que outro host da máquina pergunta para medir um tile; nunca sai daqui para perguntar a mais
    * ninguém.
    */
   async estado(_args: JsonValue, ctx: Contexto): Promise<Estado> {
@@ -416,9 +533,8 @@ export const actions = {
   },
 
   /**
-   * Sobe o host de um projeto parado, na primeira porta livre, e só devolve a linha quando a porta
-   * responde; o que não sobe no prazo é encerrado e o erro vai para a linha. Um host que já roda não é
-   * tocado: a linha já diz em que porta ele está.
+   * Sobe o host de um projeto parado, na primeira porta livre; um host que já roda não é tocado — a
+   * linha volta como está, e o popover diz em que porta ele está.
    */
   async iniciar(args: JsonValue, ctx: Contexto): Promise<Projeto> {
     const name = nomeDoArgumento(args)
@@ -426,43 +542,49 @@ export const actions = {
     // A guarda é o pid vivo: um lock de pid morto é um projeto parado, e é o `undefined` aqui.
     if (projeto.running) return montar(projeto)
     if (projeto.current) throw new Error(`${name} runs this window`)
-    if (!projeto.root) throw new Error(`No path for ${name}`)
-    const port = await escolherPorta(portaLivre)
-    const child = lancar(
-      process.execPath,
-      [programaDeInicio(ctx.host.ultimateRoot), ...argumentosDeInicio(projeto.root, port)],
-      { cwd: projeto.root, env: ambiente(projeto.home), log: join(projeto.home, LOG) },
-    )
-    const pid = child.pid
-    if (pid === undefined) throw new Error(`Could not start ${name}`)
-    let saida: string | undefined
-    child.once('error', (erro) => {
-      saida = `could not run ${process.execPath}: ${erro.message}`
-    })
-    child.once('exit', (code, sinal) => {
-      saida ??= `the process exited (${sinal ?? `code ${code}`})`
-    })
-    // Gravado logo depois do spawn: a janela entre um e outro é o único caso em que o host fica sem
-    // registo — e o pior que isso custa é um clique de confirmação a mais (ver README).
-    await lembrar(projeto.home, pid, port)
-    const url = `http://127.0.0.1:${port}`
-    const falha = await saude(url, () => saida)
-    // O host que atende pode não ser o nosso: um clique anterior, ou outro processo, chegou primeiro.
-    const dono = await lerLock(projeto.home)
-    const outro = dono && dono.pid !== pid && vivo(dono.pid) ? dono : undefined
-    if (falha !== undefined && !outro) {
-      await encerrar(pid)
-      await esquecer(projeto.home, pid)
-      const resto = await cauda(projeto.home)
-      throw new Error(`${name} did not answer on :${port} — ${falha}${resto ? `: ${resto}` : ''}`)
+    return subir(ctx, projeto, { log: join(projeto.home, LOG) })
+  },
+
+  /**
+   * Cria um projeto a partir de uma pasta: expande `~`, exige um diretório de verdade, e sobe o host
+   * dele como o `iniciar` faz. Uma pasta que já é um projeto da lista é selecionada — e, se estiver
+   * parada, subida — em vez de um segundo host para a mesma raiz. A primeira execução daquele projeto,
+   * o onboarding e a decisão de confiança dele acontecem na janela dele: esta extensão não decide nada
+   * por ele. O home do projeto novo nasce com o host, não aqui.
+   */
+  async criar(args: JsonValue, ctx: Contexto): Promise<ResultadoDaCriacao> {
+    const absoluto = caminhoAbsoluto(caminhoDoArgumento(args), homedir())
+    if (!absoluto) throw new Error('Enter a full path, such as ~/src/my-project')
+    const root = await realpath(absoluto).catch(() => undefined)
+    if (!root) throw new Error(`No such folder: ${absoluto}`)
+    const info = await stat(root).catch(() => undefined)
+    if (!info?.isDirectory()) throw new Error(`Not a folder: ${root}`)
+    const projetos = await ctx.host.projects()
+    const existente = projetos.find((projeto) => projeto.root === root)
+    if (existente) {
+      if (existente.running || existente.current)
+        return { criado: false, projeto: montar(existente) }
+      return {
+        criado: false,
+        projeto: await subir(ctx, existente, { log: join(existente.home, LOG) }),
+      }
     }
-    // Não fomos nós que ficamos de pé: o registo deste pid não vale para o host que atende.
-    if (dono?.pid !== pid) await esquecer(projeto.home, pid)
-    const emPe = outro ?? (dono?.pid === pid ? dono : undefined)
-    return montar({
-      ...projeto,
-      running: { pid: emPe?.pid ?? pid, url: emPe?.port ? `http://127.0.0.1:${emPe.port}` : url },
-    })
+    // Pasta nova: o home nasce com o host, então o log fica num diretório temporário até ele responder.
+    const temp = await mkdtemp(join(tmpdir(), 'ultimate-projetos-'))
+    try {
+      const projeto: ProjetoDoHost = {
+        name: basename(root),
+        root,
+        home: homeDoProjeto(root, usuario()),
+        current: false,
+      }
+      return {
+        criado: true,
+        projeto: await subir(ctx, projeto, { log: join(temp, LOG), pastaNova: true }),
+      }
+    } finally {
+      await rm(temp, { recursive: true, force: true })
+    }
   },
 
   /**

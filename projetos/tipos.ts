@@ -1,33 +1,45 @@
 /**
- * O que as ações devolvem e o que a seção desenha: nada aqui é estado guardado — a leitura é feita na
+ * O que as ações devolvem e o que o rail desenha: nada aqui é estado guardado — a leitura é feita na
  * hora e a tela só mostra o que veio.
  */
 
-/** Um projeto da máquina, como a seção o mostra. */
+/** Um projeto da máquina, como o rail o mostra. */
 export interface Projeto {
   name: string
-  /** O caminho completo, que vai no `title` da linha. */
+  /** O caminho completo, que vai no popover do tile. */
   root: string
   /** O projeto desta janela. */
   current: boolean
-  /** De pé: o pid e a URL que o host publica no lock dele. */
+  /** De pé: o pid e a URL que o host publica no lock dele. A URL é o alvo do clique do tile. */
   running?: { pid: number; url: string }
   /**
-   * Conversas trabalhando agora. `undefined` quando o host está parado (não há o que medir) e `null`
-   * quando ele está de pé e não respondeu — os dois casos dizem coisas diferentes na tela.
+   * Conversas trabalhando agora. `undefined` quando a medida não foi pedida (`listar` do rail) ou o
+   * host está parado, e `null` quando ele está de pé e não respondeu — os casos dizem coisas diferentes.
    */
   working?: number | null
   /** Perguntas do painel sem resposta naquele host, com a mesma regra do `working`. */
   perguntasAbertas?: number | null
-  /** Por que não respondeu; vai no `title` da linha, não na linha. */
+  /** Por que não respondeu; vai no popover, não no tile. */
   motivo?: string
   /** `ultimate <caminho>`, o comando que sobe o projeto à mão. Mostrado e copiado, nunca executado. */
   comando?: string
 }
 
-/** A lista inteira e quando ela foi medida: o botão de atualizar diz a hora no `title`. */
+/** A lista inteira e quando ela foi lida: o rail mostra a hora no popover do botão de atualizar. */
 export interface Secao {
   projetos: Projeto[]
+  at: string
+}
+
+/**
+ * O que se mediu num projeto quando o popover dele abriu: as conversas trabalhando, as perguntas sem
+ * resposta, a hora da medida, e o motivo quando o host não respondeu — nunca um zero no lugar do
+ * silêncio.
+ */
+export interface Medida {
+  working: number | null
+  perguntasAbertas: number | null
+  motivo?: string
   at: string
 }
 
@@ -37,6 +49,15 @@ export interface Estado {
   /** Perguntas sem resposta neste host; `null` quando nem isso se mediu. */
   perguntasAbertas: number | null
   at: string
+}
+
+/**
+ * O que a ação `criar` fez: subiu um host para uma pasta nova (`criado: true`) ou selecionou o projeto
+ * que já era aquela pasta — de pé, ou subindo agora —, sem um segundo host para a mesma raiz.
+ */
+export interface ResultadoDaCriacao {
+  criado: boolean
+  projeto: Projeto
 }
 
 /**
