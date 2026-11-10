@@ -1,24 +1,25 @@
 #!/bin/sh
-# Setup de um worktree novo deste repositório: aqui não existe node_modules.
+# Setup for a new worktree of this repository: there is no node_modules here.
 #
-# O node_modules de cada extensão é um symlink para o do clone do Ultimate (`install.sh` o cria no
-# checkout principal, e o .gitignore o mantém fora do git). Num checkout novo não há esse link, e
-# `node --test` não resolve `@earendil-works/*` até ele existir. Este script refaz o link para cada
-# pasta do checkout de origem que seja uma extensão — uma extensão nova aqui não pede mudança nele.
+# Each extension's node_modules is a symlink to the Ultimate clone's (`install.sh` creates it in the
+# main checkout, and .gitignore keeps it out of git). A new checkout has no such link, and
+# `node --test` does not resolve `@earendil-works/*` until it exists. This script remakes the link for
+# each folder of the source checkout that is an extension — a new extension here asks for no change
+# in it.
 #
-# Seguro de repetir: um node_modules que já existe, link ou pasta, é deixado como está.
+# Safe to repeat: a node_modules that already exists, link or folder, is left as it is.
 set -eu
 
-origem=${ULTIMATE_SOURCE:?ULTIMATE_SOURCE precisa apontar para o checkout de origem}
+origem=${ULTIMATE_SOURCE:?ULTIMATE_SOURCE must point at the source checkout}
 
 for pasta in "$origem"/*/; do
   nome=$(basename "$pasta")
-  # Só pasta que é extensão de verdade: uma com server.ts ou web.tsx.
+  # Only a folder that is a real extension: one with server.ts or web.tsx.
   if [ ! -f "$pasta/server.ts" ] && [ ! -f "$pasta/web.tsx" ]; then
     continue
   fi
   modulos=$(cd "$pasta/node_modules" 2>/dev/null && pwd -P) || {
-    echo "note  $nome: $pasta/node_modules não existe — rode install.sh no checkout de origem" >&2
+    echo "note  $nome: $pasta/node_modules does not exist — run install.sh in the source checkout" >&2
     continue
   }
   if [ -e "$nome/node_modules" ] || [ -L "$nome/node_modules" ]; then

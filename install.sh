@@ -1,10 +1,10 @@
 #!/bin/sh
-# Liga cada extensão deste repositório em ~/.ultimate/extensions/<nome>, que é de onde o Ultimate as
-# carrega, e aponta o node_modules delas para o clone do Ultimate. Idempotente: rodar de novo não
-# muda nada; uma extensão nova aqui é instalada por uma linha a mais na próxima execução.
+# Links each extension of this repository into ~/.ultimate/extensions/<name>, which is where Ultimate
+# loads them from, and points their node_modules at the Ultimate clone. Idempotent: running it again
+# changes nothing; a new extension here is installed by one more line on the next run.
 #
-# O clone do Ultimate sai de $ULTIMATE_ROOT, e por omissão de ~/src/ultimate: é dele que vêm os
-# pacotes @earendil-works/* de que os testes de cada extensão precisam.
+# The Ultimate clone comes from $ULTIMATE_ROOT, and by default from ~/src/ultimate: it is where the
+# @earendil-works/* packages that each extension's tests need come from.
 set -eu
 
 repo=$(cd "$(dirname "$0")" && pwd)
@@ -17,14 +17,14 @@ mkdir -p "$dest"
 for path in "$repo"/*/; do
   name=${path%/}
   name=${name##*/}
-  # Só pasta que é extensão de verdade: node_modules não está aqui, e .git não casa com este glob.
+  # Only a folder that is a real extension: node_modules is not here, and .git does not match this glob.
   if [ ! -f "$repo/$name/server.ts" ] && [ ! -f "$repo/$name/web.tsx" ]; then
     continue
   fi
 
   link="$dest/$name"
   if [ -d "$link" ] && [ ! -L "$link" ]; then
-    echo "skip  $name: $link é uma pasta de verdade, não um link — remova-a à mão" >&2
+    echo "skip  $name: $link is a real folder, not a link — remove it by hand" >&2
     continue
   fi
   if [ -L "$link" ] && [ "$(readlink "$link")" = "$repo/$name" ]; then
@@ -35,17 +35,17 @@ for path in "$repo"/*/; do
   fi
 
   if [ ! -d "$modules" ]; then
-    echo "note  $name: sem $modules — os testes não resolvem @earendil-works/*. Aponte ULTIMATE_ROOT para o clone" >&2
+    echo "note  $name: without $modules — the tests do not resolve @earendil-works/*. Point ULTIMATE_ROOT at the clone" >&2
   elif [ -L "$repo/$name/node_modules" ]; then
-    # Um link para outro sítio se refaz; um node_modules de verdade (instalado à mão) fica como está.
+    # A link to another place is remade; a real node_modules (installed by hand) stays as it is.
     [ "$(readlink "$repo/$name/node_modules")" = "$modules" ] || ln -sfn "$modules" "$repo/$name/node_modules"
   elif [ -e "$repo/$name/node_modules" ]; then
-    echo "note  $name: $repo/$name/node_modules existe e não é link — deixado como está" >&2
+    echo "note  $name: $repo/$name/node_modules exists and is not a link — left as it is" >&2
   else
     ln -s "$modules" "$repo/$name/node_modules"
     echo "link  $name/node_modules -> $modules"
   fi
 done
 
-# A recarga é a quente: nada aqui pede reiniciar o Ultimate. A prova são as duas ações, em qualquer
-# conversa: `projetos` → `listar` e `rate-limiter` → `status`.
+# Reload is hot: nothing here asks for an Ultimate restart. The proof is the two actions, in any
+# conversation: `projetos` → `listar` and `rate-limiter` → `status`.

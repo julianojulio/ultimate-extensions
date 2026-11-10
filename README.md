@@ -1,143 +1,147 @@
 # ultimate-extensions
 
-As extensões de **máquina** do [Ultimate](https://github.com/HazAT/ultimate): moram em
-`~/.ultimate/extensions/` e valem para **todos** os projetos desta máquina.
+The **machine** extensions of [Ultimate](https://github.com/HazAT/ultimate): they live in
+`~/.ultimate/extensions/` and apply to **all** projects on this machine.
 
-## O que é uma extensão de máquina
+## What a machine extension is
 
-O Ultimate descobre extensões em três camadas:
+Ultimate discovers extensions in three layers:
 
-| Camada | Onde | Vale para |
+| Layer | Where | Applies to |
 | --- | --- | --- |
-| `builtin` | `extensions/` do clone do Ultimate | tudo, e é da máquina |
-| `project` | `<projeto>/.ultimate/extensions/` | aquele projeto |
-| `user` | `~/.ultimate/extensions/` | **todos os projetos desta máquina** |
+| `builtin` | `extensions/` of the Ultimate clone | everything, and it belongs to the machine |
+| `project` | `<project>/.ultimate/extensions/` | that project |
+| `user` | `~/.ultimate/extensions/` | **all projects on this machine** |
 
-Este repositório é o que mora na terceira linha: as extensões que não pertencem a nenhum projeto de
-produto, mas mudam como a máquina trabalha — quantos pedidos simultâneos cada provedor aceita, e
-onde está acontecendo algo em cada projeto aberto. Elas carregam a quente, ao lado de qualquer projeto,
-e valem também para as conversas de automação e para os subagentes.
+This repository is what sits in the third row: the extensions that belong to no product project but
+change how the machine works — how many simultaneous requests each provider accepts, and where
+something is happening in each open project. They hot-load, alongside any project, and they also
+apply to automation conversations and to subagents.
 
-O que **entra** aqui: extensão que fala da máquina (processos, tetos de provedor, portas, homes de
-outros projetos) e não do produto de ninguém. O que **não** entra: UI ou regra de um projeto — isso é
-`<projeto>/.ultimate/extensions/`.
+**What goes in** here: an extension about the machine (processes, provider caps, ports, other
+projects' homes), not about anyone's product. **What does not**: a project's UI or rule — that is
+`<project>/.ultimate/extensions/`.
 
-## As extensões
+## The extensions
 
-### `projetos` — o rail dos projetos da máquina
+### `projetos` — the rail of this machine's projects
 
-**O que resolve:** com mais de um projeto aberto nesta máquina, trocar de um para outro e responder «onde
-está acontecendo algo agora» sem janela nem terminal: um **rail** de 48px na borda esquerda da janela,
-presente em todas as superfícies, com um tile de iniciais por projeto — os hosts de pé em cima, os
-parados embaixo —, o bloco inteiro como alvo do clique, o número da porta fora da tela e, no canto de
-cada tile, o **ponto de presença** do app: cinza parado, verde ocioso, pulsando quando trabalha, e o
-número de perguntas sem resposta em âmbar. Um projeto de pé abre naquele projeto nesta aba; um parado
-sobe; o painel do tile (hover ou foco) diz a porta, o estado escrito, quantas conversas daquele projeto
-estão trabalhando e quantas perguntas esperam resposta, medido na hora em que o painel abre, com a hora;
-o `+` cria um projeto a partir de uma pasta; e o interruptor do pé liga e desliga a **animação do
-splash**, escrevendo só essa entrada nas settings desta máquina. No celular não há rail: a gaveta da
-sidebar continua com a lista compacta, com as medidas.
+**What it solves:** with more than one project open on this machine, switching from one to the other
+and answering «where is something happening right now» without a window or a terminal: a 48px
+**rail** on the left edge of the window, present on every surface, with one initials tile per project
+— running hosts on top, stopped ones below —, the whole block as the click target, the port number
+off-screen and, in the corner of each tile, the app's **presence dot**: grey stopped, green idle,
+pulsing while it works, and the number of unanswered questions in amber. A running project opens in
+that project in this tab; a stopped one comes up; the tile panel (hover or focus) gives the port, the
+state in words, how many conversations of that project are working and how many questions wait for
+an answer, measured at the moment the panel opens, with the time; the `+` creates a project from a
+folder; and the switch at the foot of the rail turns the **splash animation** on and off, writing only
+that entry in this machine's settings. On the phone there is no rail: the sidebar drawer keeps the
+compact list, with the measurements.
 
-**O que não faz:** não mede o host a cada instante (o indicador diz de quando é), não mostra a porta no
-tile, não agenda nada, não faz poll, não mata processo que não subiu sem perguntar (e nunca por porta,
-nome ou grupo), não esconde nem move projeto, não decide onboarding nem confiança por um projeto novo,
-não mexe em extensão nenhuma além do splash (e só na camada desta máquina) e não alcança outra máquina.
-Detalhe em [`projetos/README.md`](projetos/README.md).
+**What it does not do:** it does not measure the host at every instant (the indicator says when it is
+from), it does not show the port on the tile, it schedules nothing, it does not poll, it
+does not kill a process that failed to come up without asking (and never by port, name or group), it
+does not hide or move a project, it does not decide onboarding or trust for a new project, it
+touches no extension besides the splash (and only in this machine's layer), and it does not reach
+another machine. Details in [`projetos/README.md`](projetos/README.md).
 
-### `rate-limiter` — teto de pedidos simultâneos por provedor
+### `rate-limiter` — simultaneous request cap per provider
 
-**O que resolve:** o provedor devolve `error 429` quando recebe muitos pedidos de uma vez. A extensão
-segura quantos pedidos ficam **em voo ao mesmo tempo** em cada provedor (3 em `cirthan-dev` e em
-`cirthan`, ou o que o `~/.ultimate/settings.json` desta máquina disser) e põe o resto numa fila por
-ordem de chegada. O teto é por provedor e por máquina: vale para conversas, subagentes e automações
-juntas, e muda ao salvar o arquivo, sem reiniciar.
+**What it solves:** the provider returns `error 429` when it receives too many requests at once. The
+extension holds how many requests are **in flight at the same time** per provider (3 on `cirthan-dev`
+and on `cirthan`, or whatever this machine's `~/.ultimate/settings.json` says) and puts the rest in a
+queue in arrival order. The cap is per provider and per machine: it holds for conversations,
+subagents and automations together, and it changes when the file is saved, with no restart.
 
-**O que não faz:** não mexe em provedor que não existe aqui, não limita provedor fora do mapa
-(`Infinity`), não lê o `settings.json` de projeto nenhum (um projeto não pode subir o teto dos
-outros) e não conta tokens nem custo. Detalhe em [`rate-limiter/README.md`](rate-limiter/README.md).
+**What it does not do:** it does not touch a provider that does not exist here, it does not limit a
+provider outside the map (`Infinity`), it does not read any project's `settings.json` (one project
+cannot raise the others' cap), and it does not count tokens or cost. Details in
+[`rate-limiter/README.md`](rate-limiter/README.md).
 
-## Instalar
+## Install
 
 ```sh
 sh ~/src/ultimate-extensions/install.sh
 ```
 
-O script é idempotente — rodar de novo não muda nada — e faz duas coisas, para cada pasta deste
-repositório que seja uma extensão (`server.ts` ou `web.tsx`):
+The script is idempotent — running it again changes nothing — and does two things, for each folder of
+this repository that is an extension (`server.ts` or `web.tsx`):
 
-1. liga `~/.ultimate/extensions/<nome>` como **symlink** para a pasta daqui;
-2. liga `<nome>/node_modules` no `node_modules` do clone do Ultimate, que é de onde os testes
-   resolvem `@earendil-works/*`. O clone sai de `$ULTIMATE_ROOT`, por omissão `~/src/ultimate`.
+1. links `~/.ultimate/extensions/<name>` as a **symlink** to the folder here;
+2. links `<name>/node_modules` into the Ultimate clone's `node_modules`, which is where the tests
+   resolve `@earendil-works/*` from. The clone comes from `$ULTIMATE_ROOT`, by default
+   `~/src/ultimate`.
 
-Uma pasta de verdade em `~/.ultimate/extensions/<nome>` **não** é substituída: o script avisa e segue
-(nada de apagar conteúdo alheio). Um `node_modules` que não seja link também fica como está.
+A real folder at `~/.ultimate/extensions/<name>` is **not** replaced: the script warns and moves on
+(no deleting someone else's content). A `node_modules` that is not a link also stays as it is.
 
-**Nada disso pede reiniciar o Ultimate**: as extensões recarregam a quente. A prova, em qualquer
-conversa:
+**None of this asks for an Ultimate restart**: the extensions reload hot. The proof, in any
+conversation:
 
 ```ts
-ultimate.action('projetos', 'listar', {})              // os projetos da máquina, com estado e medidas
-ultimate.action('projetos', 'listar', { medir: false }) // a leitura barata do rail, sem medida
-ultimate.action('projetos', 'splash', { enabled: false }) // desliga a animação do splash (e true liga)
+ultimate.action('projetos', 'listar', {})              // this machine's projects, with state and measurements
+ultimate.action('projetos', 'listar', { medir: false }) // the rail's cheap read, without measuring
+ultimate.action('projetos', 'splash', { enabled: false }) // turns the splash animation off (and true turns it on)
 ultimate.action('rate-limiter', 'status', {})          // { wrapped, limits, active, queued }
 ```
 
-E `ultimate.extensions()` mostra as duas com `server.loadedAt` e sem `server.error`.
+And `ultimate.extensions()` shows both with `server.loadedAt` and without `server.error`.
 
-## A recarga a quente sobrevive ao symlink — medido
+## Hot reload survives the symlink — measured
 
-O host carrega a extensão pelo **alvo** do link (`realpath`, em `server/discovery.ts`) e o watcher
-reporta o arquivo **pelo link**; `server/extensions.ts` já resolve um pelo outro antes de invalidar o
-módulo. Medição feita nesta máquina, com as duas extensões vivas:
+The host loads the extension through the link's **target** (`realpath`, in `server/discovery.ts`) and
+the watcher reports the file **through the link**; `server/extensions.ts` already resolves one to the
+other before invalidating the module. Measurement made on this machine, with both extensions live:
 
 | | `projetos` `loadedAt` | `rate-limiter` `loadedAt` |
 | --- | --- | --- |
-| antes de editar `projetos/server.ts` no repositório | `2026-11-10T01:16:39.746Z` | `2026-11-10T01:16:40.111Z` |
-| depois de salvar | `2026-11-10T01:17:27.808Z` | `2026-11-10T01:16:40.111Z` (intocada) |
+| before editing `projetos/server.ts` in the repository | `2026-11-10T01:16:39.746Z` | `2026-11-10T01:16:40.111Z` |
+| after saving | `2026-11-10T01:17:27.808Z` | `2026-11-10T01:16:40.111Z` (untouched) |
 
-E não foi só o `loadedAt`: a edição de prova somou um campo temporário ao retorno de `listar`
-(`sonda: 'symlink-reload'`), que a ação devolveu em seguida. Ou seja, o módulo relido era **o do
-alvo do link**, com o conteúdo novo — não um cache, nem o arquivo do link. Removida a sonda, a ação
-voltou a devolver `{ projetos, at, splash }`. A `rate-limiter` respondeu `status` normalmente o tempo
-todo, e **o host não foi reiniciado**.
+And it was not only the `loadedAt`: the test edit added a temporary field to the return of `listar`
+(`sonda: 'symlink-reload'`), which the action returned right after. That is, the module re-read was
+**the link target's**, with the new content — not a cache, not the link's file. With the `sonda`
+removed, the action returned `{ projetos, at, splash }` again. The `rate-limiter` answered `status`
+normally the whole time, and **the host was not restarted**.
 
-Por isso a instalação é por symlink: edita-se aqui, e o Ultimate recarrega sozinho.
+That is why the install is by symlink: you edit here, and Ultimate reloads on its own.
 
-## Editar e testar
+## Edit and test
 
-O código é **daqui**; `~/.ultimate/extensions/<nome>` é só o link que o Ultimate lê. Depois de
-`git pull` (ou de mover o clone), rode o `install.sh` de novo.
+The code is **here**; `~/.ultimate/extensions/<name>` is only the link Ultimate reads. After a
+`git pull` (or moving the clone), run `install.sh` again.
 
 ```sh
-cd ~/src/ultimate-extensions/projetos     && node --test projetos.test.ts   # 26 testes
-cd ~/src/ultimate-extensions/rate-limiter && node --test limiter.test.ts    # 12 testes
+cd ~/src/ultimate-extensions/projetos     && node --test projetos.test.ts   # 26 tests
+cd ~/src/ultimate-extensions/rate-limiter && node --test limiter.test.ts    # 12 tests
 ```
 
-Os dois conjuntos são puros (fixtures, `HOME` temporário e um host falso): nenhum teste lê a máquina,
-abre processo ou fala com provedor de verdade. O que é de máquina — o link, a recarga, a seção na
-barra — prova-se ao vivo, com o Ultimate aberto.
+Both suites are pure (fixtures, a temporary `HOME` and a fake host): no test reads the machine, opens
+a process or talks to a real provider. What is about the machine — the link, the reload, the section
+in the sidebar — is proven live, with Ultimate open.
 
-## Estrutura
+## Structure
 
 ```
 ultimate-extensions/
-├── install.sh          # liga cada extensão em ~/.ultimate/extensions/<nome>
+├── install.sh          # links each extension into ~/.ultimate/extensions/<name>
 ├── LICENSE             # MIT
-├── projetos/           # o rail de projetos na borda esquerda
+├── projetos/           # the projects rail on the left edge
 │   ├── README.md
-│   ├── server.ts        # ações: listar, medir, estado, iniciar, criar, parar, splash
-│   ├── projetos.ts      # as contas puras (iniciais, grupos, presença, caminho, porta, parada, splash)
-│   ├── tipos.ts         # o que as ações devolvem
-│   ├── web.tsx          # o rail, o painel do tile, o diálogo do +, a lista do celular e o pé
+│   ├── server.ts        # actions: listar, medir, estado, iniciar, criar, parar, splash
+│   ├── projetos.ts      # the pure calculations (initials, groups, presence, path, port, stop, splash)
+│   ├── tipos.ts         # what the actions return
+│   ├── web.tsx          # the rail, the tile panel, the + dialog, the phone list and the foot
 │   ├── projetos.test.ts
-│   └── screenshots/     # rail, estado, pé, painel e diálogo de um projeto novo
-└── rate-limiter/       # teto de pedidos simultâneos por provedor
+│   └── screenshots/     # rail, state, foot, panel and a new project's dialog
+└── rate-limiter/       # simultaneous request cap per provider
     ├── README.md
-    ├── server.ts        # embrulha o stream do provedor; ação: status
-    ├── limiter.ts       # o semáforo e a leitura dos tetos
+    ├── server.ts        # wraps the provider stream; action: status
+    ├── limiter.ts       # the semaphore and the reading of the caps
     └── limiter.test.ts
 ```
 
-## Licença
+## License
 
-MIT — © 2026 Juliano Julio Costa. Ver [`LICENSE`](LICENSE).
+MIT — © 2026 Juliano Julio Costa. See [`LICENSE`](LICENSE).
