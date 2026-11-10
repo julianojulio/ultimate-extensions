@@ -416,6 +416,24 @@ function caminhoDoArgumento(args: JsonValue): string {
 }
 
 /**
+ * Apaga o home que uma primeira subida criou e que não chegou a virar projeto. O diretório só existe
+ * porque o processo filho o fez (`bin/ultimate.ts` cria `ULTIMATE_HOME` antes de abrir o core); se ele
+ * morreu antes de escrever o `project.json`, aquele home é lixo — e `listar` lê todo diretório sob
+ * `~/.ultimate/projects`, então ele apareceria para sempre como um tile sem caminho. Um `project.json`
+ * escrito, ou um host vivo segurando o lock, significam que o projeto é de verdade e nada é tocado.
+ */
+async function descartarHome(home: string) {
+  const escrito = await readFile(join(home, 'project.json'), 'utf8').then(
+    () => true,
+    () => false,
+  )
+  if (escrito) return
+  const dono = await lerLock(home)
+  if (dono && vivo(dono.pid)) return
+  await rm(home, { recursive: true, force: true })
+}
+
+/**
  * Sobe o host de um projeto e só devolve quando a porta responde; o que não sobe no prazo é encerrado
  * e o erro sai com a cauda do log. Um projeto que ainda não tem home (`pastaNova`) escreve o log num
  * diretório temporário e só ganha o registo do pid depois de responder — o home é do host, não desta
@@ -456,6 +474,8 @@ async function subir(
     await encerrar(pid)
     await esquecer(projeto.home, pid)
     const resto = await cauda(options.log)
+    // Uma pasta que não virou projeto não pode deixar o home que o processo criou para trás.
+    if (options.pastaNova) await descartarHome(projeto.home)
     throw new Error(
       `${projeto.name} did not answer on :${port} — ${falha}${resto ? `: ${resto}` : ''}`,
     )
@@ -476,7 +496,9 @@ export const actions = {
    * lista do celular mostra); `{ medir: false }` é a leitura barata do rail, que não mostra número.
    */
   async listar(args: JsonValue, ctx: Contexto): Promise<Secao> {
-    const projetos = await ctx.host.projects()
+    // Um home sem `project.json` (uma subida que morreu antes de registrar) não é projeto de nada:
+    // não tem caminho, não se sobe e não se mede — mostrar um tile dele seria mentir sobre a máquina.
+    const projetos = (await ctx.host.projects()).filter((projeto) => projeto.root)
     if (!pediuMedida(args))
       return { projetos: projetos.map((projeto) => montar(projeto)), at: new Date().toISOString() }
     const aqui: Medidas = { working: trabalhando(ctx), perguntasAbertas: await abertas(ctx) }
@@ -570,6 +592,13 @@ export const actions = {
         projeto: await subir(ctx, existente, { log: join(existente.home, LOG) }),
       }
     }
+    // Duas pastas com o mesmo nome de projeto não se distinguem aqui: as ações falam por nome, e um
+    // segundo `app` faria o tile do primeiro responder pelo segundo (e pará-lo no lugar dele).
+    const homonimo = projetos.find((projeto) => projeto.name === basename(root))
+    if (homonimo)
+      throw new Error(
+        `A project called ${basename(root)} already exists (${homonimo.root ?? homonimo.home}); two projects with the same folder name cannot be told apart here`,
+      )
     // Pasta nova: o home nasce com o host, então o log fica num diretório temporário até ele responder.
     const temp = await mkdtemp(join(tmpdir(), 'ultimate-projetos-'))
     try {

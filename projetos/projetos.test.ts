@@ -34,9 +34,11 @@ import {
   medido,
   palavra,
   perguntas,
+  podeParar,
   portaDo,
   PRIMEIRA_PORTA,
   programaDeInicio,
+  temMedida,
   tituloDasPerguntas,
 } from './projetos.ts'
 import type { Alvo } from './projetos.ts'
@@ -112,6 +114,25 @@ test('medido só aceita inteiro finito e não negativo', () => {
   assert.equal(medido(3), 3)
   for (const torto of [-1, 0.5, Number.NaN, Number.POSITIVE_INFINITY, null, undefined])
     assert.equal(medido(torto), undefined)
+})
+
+test('um zero é medida: só o silêncio do host e o projeto parado não são', () => {
+  // O bug que isto fixa: tratar `0` como ausência e escrever `unavailable` num host que respondeu.
+  assert.equal(temMedida(0, 0), true)
+  assert.equal(temMedida(0, null), true)
+  assert.equal(temMedida(null, 2), true)
+  // `null` é o host de pé que não respondeu; `undefined` é o projeto parado, que ninguém perguntou.
+  assert.equal(temMedida(null, null), false)
+  assert.equal(temMedida(undefined, undefined), false)
+  assert.equal(temMedida(Number.NaN, -1), false)
+})
+
+test('só um projeto de pé que não é esta janela tem o que parar', () => {
+  assert.equal(podeParar(depe(1)), true)
+  // Um projeto parado não tem host para deitar: o clique dele sobe.
+  assert.equal(podeParar(parado), false)
+  // Quem serve a tela em que se clica não se desliga nela.
+  assert.equal(podeParar({ ...depe(0), current: true }), false)
 })
 
 test('o comando copiado é o comando que roda, com aspas quando o caminho pede', () => {

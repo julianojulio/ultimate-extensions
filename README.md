@@ -104,7 +104,7 @@ O código é **daqui**; `~/.ultimate/extensions/<nome>` é só o link que o Ulti
 `git pull` (ou de mover o clone), rode o `install.sh` de novo.
 
 ```sh
-cd ~/src/ultimate-extensions/projetos     && node --test projetos.test.ts   # 16 testes
+cd ~/src/ultimate-extensions/projetos     && node --test projetos.test.ts   # 18 testes
 cd ~/src/ultimate-extensions/rate-limiter && node --test limiter.test.ts    # 12 testes
 ```
 

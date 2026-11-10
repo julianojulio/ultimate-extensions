@@ -42,6 +42,23 @@ export function medido(valor: number | null | undefined): number | undefined {
 }
 
 /**
+ * Se há medida para mostrar. **Um zero é medida** — o bug que isto fixa é o de tratar `0` como ausência:
+ * `0 working · 0 questions` é uma resposta; `null` (o host está de pé e não respondeu) e `undefined`
+ * (o projeto está parado, ninguém perguntou) não são.
+ */
+export function temMedida(
+  working: number | null | undefined,
+  abertas: number | null | undefined,
+): boolean {
+  return medido(working) !== undefined || medido(abertas) !== undefined
+}
+
+/** Se o projeto tem host para parar: de pé, e não o desta janela (quem serve a tela não se desliga nela). */
+export function podeParar(projeto: Projeto): boolean {
+  return projeto.running !== undefined && !projeto.current
+}
+
+/**
  * Quantas conversas estão trabalhando agora: `0 working`, `2 working`. Um número que não se mediu não
  * vira zero — vira `count unavailable`.
  */

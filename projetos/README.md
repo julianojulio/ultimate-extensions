@@ -98,6 +98,9 @@ log dele).
   `app_evangelho is running :4801` e `No second host was started for that folder.`; parado, esta
   extensão sobe aquele host; e o caminho desta própria janela diz `is this window`. Em nenhum desses
   casos nasce um segundo host para a mesma raiz.
+- **Duas pastas com o mesmo nome de projeto não se distinguem aqui**, porque as ações falam por nome: um
+  segundo `app` faria o tile do primeiro responder pelo segundo (e pará-lo no lugar dele). Então o `+`
+  **recusa** a segunda com todas as letras, nomeando o projeto que já existe.
 - **Um projeto novo não se registra à mão**: o home central (`~/.ultimate/projects/<nome>-<8 hex do
   caminho>`) nasce com o host que roda naquela pasta, e é por isso que `listar` já o encontra na
   leitura seguinte. A extensão calcula esse home para passar `ULTIMATE_HOME` ao processo — é o mesmo
@@ -165,7 +168,9 @@ Só no home de um projeto que ela mesma subiu:
 
 E, para um projeto **novo**, um diretório temporário do sistema (`ultimate-projetos-…` no diretório de
 temporários) com o log da primeira subida, apagado assim que a ação termina — porque um projeto novo
-ainda não tem home, e um home criado pela extensão ficaria órfão na lista se a subida falhasse.
+ainda não tem home. Se o processo morrer antes de escrever o `project.json` (uma porta tomada no meio,
+um `.ultimate/` quebrado, um reset interrompido), a extensão **apaga o home que ele criou**, e `listar`
+também ignora um home sem `project.json`: uma subida morta nunca vira um tile sem caminho.
 
 **Os dois limites conhecidos, nomeados:**
 
@@ -181,9 +186,10 @@ quem usa fora dos homes dos projetos que esta extensão subiu.
 
 ## Sem poll
 
-Abrir a janela lê uma vez; o botão de atualizar (o `⟳` do pé do rail, cujo `title` diz a hora da última
-leitura) é a outra leitura, e as ações `iniciar`, `parar` e `criar` releem ao terminar, porque mudaram
-a máquina. Não há timer, nem assinatura de evento de outro host: **um contador que envelhece é
+Abrir a janela lê uma vez; trocar a conversa mostrada é outra leitura (o SDK indexa a leitura de uma
+ação pela conversa em que ela é feita), e o botão de atualizar (o `⟳` do pé do rail, cujo `title` diz a
+hora da última leitura) é a outra, e as ações `iniciar`, `parar` e `criar` releem ao terminar, porque
+mudaram a máquina. Não há timer, nem assinatura de evento de outro host: **um contador que envelhece é
 aceitável; um contador que mente não é**.
 
 ## As ações
@@ -224,6 +230,10 @@ chama, e o rail apenas passou a usar `listar` com `medir: false` e a ação nova
 - **Não esconde, move nem apaga projeto.** A lista é a que o Ultimate tem; home fora de
   `~/.ultimate/projects` (uma prévia, um servidor de rascunho) não aparece nela — e um projeto assim
   pode ser criado de novo pelo `+` como se fosse novo, porque para esta extensão ele é.
+- **Não distingue dois projetos com o mesmo nome de pasta.** As ações falam por nome de projeto: com
+  dois `app` na máquina, o primeiro (por home) é quem responde ao `iniciar`, ao `parar` e ao `medir` —
+  inclusive quando o tile e o painel em que se clica são do segundo. O `+` recusa criar o segundo, e o
+  painel de cada tile mostra o caminho inteiro, para que se saiba qual é qual.
 - **Não alcança outra máquina**: só o que roda nesta, em loopback.
 - **Não limpa lock órfão**: se um host só parou com `SIGKILL`, o lock dele fica (de pid morto) e o tile
   diz parado; quem o substitui é o próprio `ultimate`, ao subir de novo.
@@ -243,12 +253,13 @@ cd ~/src/ultimate-extensions/projetos
 node --test projetos.test.ts
 ```
 
-16 testes puros, com fixtures: as palavras do estado; a porta do link (e a URL sem porta); a contagem e
-o contador de perguntas, incluindo o que não se mediu; o `argv` com que se sobe um host; a escolha da
-primeira porta livre (e o intervalo esgotado); a decisão de parar, inclusive o lock de pid morto; as
-iniciais do tile e o tile que não carrega porta; os dois grupos do rail (o desta janela primeiro, e um
-projeto só com medida contando como parado); a expansão e a recusa de caminho do diálogo; e o home que
-um projeto novo vai ocupar. Nenhum teste lê a máquina, abre processo ou faz requisição.
+18 testes puros, com fixtures: as palavras do estado; a porta do link (e a URL sem porta); a contagem e
+o contador de perguntas, incluindo o que não se mediu e o **zero que é medida**; o `argv` com que se sobe
+um host; a escolha da primeira porta livre (e o intervalo esgotado); a decisão de parar — inclusive o
+lock de pid morto e o projeto desta janela, que não tem o que parar; as iniciais do tile e o tile que
+não carrega porta; os dois grupos do rail (o desta janela primeiro, e um projeto só com medida contando
+como parado); a expansão e a recusa de caminho do diálogo; e o home que um projeto novo vai ocupar.
+Nenhum teste lê a máquina, abre processo ou faz requisição.
 
 O `node_modules` de cada extensão é um **symlink para `~/src/ultimate/node_modules`**, criado pelo
 `install.sh` do repositório (o truque das extensões desta máquina). A leitura da máquina, a viagem ao

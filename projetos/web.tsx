@@ -59,7 +59,9 @@ import {
   medido,
   palavra,
   perguntas,
+  podeParar,
   portaDo,
+  temMedida,
   tituloDasPerguntas,
 } from './projetos.ts'
 import type { Medida, Projeto, ResultadoDaCriacao, ResultadoDaParada, Secao } from './tipos.ts'
@@ -136,13 +138,13 @@ function Coluna() {
         ) : (
           <>
             {rodando.map((projeto) => (
-              <Tile key={projeto.name} onChanged={atualizar} projeto={projeto} />
+              <Tile key={projeto.root} onChanged={atualizar} projeto={projeto} />
             ))}
             {rodando.length > 0 && parados.length > 0 && (
               <span aria-hidden="true" className="my-1.5 h-px w-6 shrink-0 bg-foreground/20" />
             )}
             {parados.map((projeto) => (
-              <Tile key={projeto.name} onChanged={atualizar} projeto={projeto} />
+              <Tile key={projeto.root} onChanged={atualizar} projeto={projeto} />
             ))}
           </>
         )}
@@ -262,6 +264,18 @@ function Tile({ projeto, onChanged }: { projeto: Projeto; onChanged: () => Promi
     setConfirmar(undefined)
   }
 
+  // `Esc` fecha o painel mesmo quando ele abriu só com o ponteiro (sem foco dentro do tile), que é o
+  // caso em que nenhum `onKeyDown` do tile chegaria. Não se impede nada: quem também escuta `Esc`
+  // segue ouvindo.
+  useEffect(() => {
+    if (!aberto) return undefined
+    const aoTeclar = (evento: KeyboardEvent) => {
+      if (evento.key === 'Escape') fechar()
+    }
+    document.addEventListener('keydown', aoTeclar)
+    return () => document.removeEventListener('keydown', aoTeclar)
+  }, [aberto])
+
   const iniciar = async (evento: { preventDefault: () => void }) => {
     evento.preventDefault()
     fechar()
@@ -315,7 +329,7 @@ function Tile({ projeto, onChanged }: { projeto: Projeto; onChanged: () => Promi
   const rotulo = projeto.current
     ? `${projeto.name} — this window`
     : depe
-      ? `Open ${projeto.name}${porta ? ` on ${porta}` : ''} in this tab`
+      ? `Open ${projeto.name} in this tab`
       : `Start ${projeto.name}`
   const dica = erro ?? (projeto.current ? `${projeto.root} — this window` : undefined)
   const conteudo = pendente === 'start' ? <LoaderCircleIcon className="size-3.5 animate-spin" /> : letras
@@ -329,9 +343,6 @@ function Tile({ projeto, onChanged }: { projeto: Projeto; onChanged: () => Promi
         if (!evento.currentTarget.contains(evento.relatedTarget)) sair()
       }}
       onFocus={entrar}
-      onKeyDown={(evento) => {
-        if (evento.key === 'Escape') fechar()
-      }}
       onPointerEnter={entrar}
       onPointerLeave={sair}
       ref={quadro}
@@ -352,7 +363,7 @@ function Tile({ projeto, onChanged }: { projeto: Projeto; onChanged: () => Promi
           aria-label={rotulo}
           className={aparencia}
           href={link}
-          title={dica ?? `${projeto.name} — open ${link} in this tab`}
+          title={dica ?? `${projeto.name} — open it in this tab`}
         >
           {conteudo}
         </a>
@@ -429,7 +440,7 @@ function Tile({ projeto, onChanged }: { projeto: Projeto; onChanged: () => Promi
                 )}
                 command
               </Button>
-              {depe && !projeto.current && (
+              {podeParar(projeto) && (
                 <Button
                   className="h-6 gap-1 px-1.5 text-[11px] text-muted-foreground"
                   disabled={pendente === 'stop'}
@@ -497,7 +508,7 @@ function PainelMedida({ medida, medindo }: { medida: Medida | undefined; medindo
         measuring…
       </p>
     )
-  const semMedida = medida.working === null && medida.perguntasAbertas === null
+  const semMedida = !temMedida(medida.working, medida.perguntasAbertas)
   return (
     <div className="flex flex-col gap-0.5">
       {semMedida ? (
@@ -750,7 +761,7 @@ function Secao() {
           </div>
         ) : (
           data?.projetos.map((projeto) => (
-            <Linha key={projeto.name} onChanged={atualizar} projeto={projeto} />
+            <Linha key={projeto.root} onChanged={atualizar} projeto={projeto} />
           ))
         )}
       </CollapsibleContent>
@@ -946,7 +957,7 @@ function Linha({ projeto, onChanged }: { projeto: Projeto; onChanged: () => Prom
 
 /** A medida da linha do celular: `1 working · 1 question`, ou `unavailable` — nunca um zero inventado. */
 function LinhaMedida({ projeto }: { projeto: Projeto }) {
-  if (medido(projeto.perguntasAbertas) === undefined && medido(projeto.working) === undefined)
+  if (!temMedida(projeto.working, projeto.perguntasAbertas))
     return (
       <span className="min-w-0 truncate" title={projeto.motivo ?? 'no measurement'}>
         unavailable
