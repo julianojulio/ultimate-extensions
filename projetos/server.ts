@@ -1,42 +1,46 @@
 /**
- * O servidor do rail “Projetos”: lê a máquina, pergunta aos outros hosts o que só eles sabem, e sobe,
- * deita ou cria um host quando alguém clica num tile, no popover ou no `+`.
+ * The server of the "Projects" rail: it reads the machine, asks the other hosts what only they know,
+ * and brings a host up, brings one down or creates one when someone clicks a tile, in the tile's panel
+ * or on the `+`.
  *
- * O código mora no repositório das extensões de máquina, `~/src/ultimate-extensions/projetos`; o que
- * o Ultimate carrega é o symlink `~/.ultimate/extensions/projetos`, feito pelo `install.sh` de lá.
- * Editar é no repositório, e a recarga a quente acompanha o link.
+ * The code lives in the machine extensions' repository, `~/src/ultimate-extensions/projetos`; what
+ * Ultimate loads is the symlink `~/.ultimate/extensions/projetos`, made by its `install.sh`. Editing is
+ * in the repository, and the hot reload follows the link.
  *
- * `listar` mostra os projetos da máquina (`host.projects()`: os homes centrais de
- * `~/.ultimate/projects`, com a URL de quem está de pé). O rail chama `listar({ medir: false })`: sem
- * viagem a outro host, porque um tile não mostra número. As medidas (`1 working · 1 question`) só
- * existem no popover de um tile, e são da ação `medir`, que pergunta **àquele** host quando o popover
- * abre. Nem o `busy` nem as perguntas de outro projeto estão em lugar nenhum do disco — a lista de
- * conversas que cada host publica não guarda o grafo de tarefas nem a caixa de perguntas —, então a
- * pergunta vai por HTTP ao próprio host daquele projeto, em loopback, e ele responde de si mesmo
- * (`estado`). Loopback com a `Origin` do alvo é o mesmo caminho que `lib/remote.ts` usa para falar com
- * outra instância. `listar()` sem argumento continua medindo todo mundo: é o que a lista do celular
- * mostra e o que qualquer outro host que chame a ação recebe.
+ * `listar` shows this machine's projects (`host.projects()`: the central homes of
+ * `~/.ultimate/projects`, with the URL of those that are up). The rail calls `listar({ medir: false })`:
+ * no trip to another host, because a tile shows no number. The measurements (`1 working · 1 question`)
+ * exist only in a tile's panel, and they are the `medir` action's, which asks **that** host when the
+ * panel opens. Neither the `busy` nor another project's questions are anywhere on disk — the
+ * conversation list each host publishes keeps neither the task graph nor the question box —, so the
+ * question goes by HTTP to that project's own host, on loopback, and it answers about itself
+ * (`estado`). Loopback with the target's `Origin` is the same path `lib/remote.ts` uses to talk to
+ * another instance. `listar()` with no argument keeps measuring everyone: it is what the phone's list
+ * shows and what any other host that calls the action receives.
  *
- * As três ações que mexem na máquina (`iniciar`, `parar`, `criar`) seguem quatro regras, e são todas
- * obrigatórias:
+ * The three actions that touch the machine (`iniciar`, `parar`, `criar`) follow four rules, and all of
+ * them are mandatory:
  *
- * 1. **A guarda é o pid vivo, nunca o arquivo.** Um lock de pid morto é um projeto parado e o clique
- *    sobe; um lock de pid vivo é «já roda em :N» e o clique não faz nada.
- * 2. **O host nasce destacado** (`spawn` com `detached`, sem tty): um filho do host que o subiu
- *    morreria no reinício deste.
- * 3. **A porta é a primeira livre a partir de 4747, e a resposta é a saúde.** Só se devolve o link
- *    quando a porta responde; o que não sobe no prazo é encerrado, e o erro vai para o popover.
- * 4. **Parar mata só o pid do lock daquele projeto** e confere que o lock sumiu: nada de `pkill`,
- *    nada de matar por porta. Um host que esta extensão não subiu pede confirmação no popover.
+ * 1. **The guard is the live pid, never the file.** A dead pid's lock is a stopped project and the click
+ *    brings it up; a live pid's lock is "already running on :N" and the click does nothing.
+ * 2. **The host is born detached** (`spawn` with `detached`, no tty): a child of the host that started
+ *    it would die on its restart.
+ * 3. **The port is the first free one from 4747, and the answer is the health check.** The link is
+ *    returned only when the port answers; what does not come up in the deadline is terminated, and the
+ *    error goes to the tile's panel.
+ * 4. **Stopping kills only the pid of that project's lock** and checks that the lock is gone: no
+ *    `pkill`, no killing by port. A host this extension did not bring up asks for confirmation in the
+ *    tile's panel.
  *
- * O estado verdadeiro é sempre o lock relido, nunca uma lista em memória: a extensão pode recarregar
- * entre uma ação e outra. Não há poll — a tela lê ao abrir e de novo no botão de atualizar.
+ * The true state is always the re-read lock, never a list in memory: the extension may reload between
+ * one action and the other. There is no poll — the screen reads on opening and again on the refresh
+ * button.
  *
- * Fora do home dos projetos que ela subiu, esta extensão escreve **um** arquivo só: o
- * `~/.ultimate/settings.json` desta máquina, quando o botão do pé do rail liga ou desliga a animação do
- * splash (a ação `splash`). Ali também nada vem de memória: a ação lê o arquivo, mexe só na entrada
- * `splash` de `extensions.disable` e recusa, sem escrever, o que o core recusaria inteiro — JSON
- * inválido, `extensions` que não é objeto (ver README).
+ * Outside the homes of the projects it brought up, this extension writes **one** file only: this
+ * machine's `~/.ultimate/settings.json`, when the button at the bottom of the rail turns the splash
+ * animation on or off (the `splash` action). There too nothing comes from memory: the action reads the
+ * file, touches only the `splash` entry of `extensions.disable` and refuses, without writing, what the
+ * core would refuse whole — invalid JSON, an `extensions` that is not an object (see README).
  */
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
@@ -83,19 +87,19 @@ import type {
 
 export default defineExtension({ name: 'projetos' })
 
-/** Quanto se espera o host de outro projeto responder antes de dizer que ele não respondeu. */
+/** How long another project's host is given to answer before it is said not to have answered. */
 const ESPERA = 3000
 
-/** O prazo da saúde de um host que se acabou de subir. */
+/** The deadline of the health check of a host that has just been brought up. */
 const ESPERA_SUBIDA = 20000
 
-/** Quanto se espera o SIGTERM antes de escalar para SIGKILL. */
+/** How long the SIGTERM is given before escalating to SIGKILL. */
 const ESPERA_PARADA = 8000
 
-/** O que se gravou no home do projeto quando foi esta extensão que subiu aquele pid. */
+/** What was written in the project's home when it was this extension that brought that pid up. */
 const REGISTO = 'projetos-started.json'
 
-/** A saída do host que se subiu, para a linha poder dizer por que ele não subiu. */
+/** The output of the host that was brought up, so that the row can say why it did not come up. */
 const LOG = 'projetos-start.log'
 
 interface ProjetoDoHost {
@@ -106,7 +110,7 @@ interface ProjetoDoHost {
   running?: { pid: number; url: string }
 }
 
-/** O serviço `messages` (core, sempre ligado), do qual se pede só o que espera o usuário. */
+/** The `messages` service (core, always on), from which only what waits for the user is asked. */
 interface ServicoDeMensagens {
   openQuestions(ctx: unknown): Promise<{ message: number; conversation: number; at: number; text: string }[]>
 }
@@ -117,25 +121,26 @@ interface Contexto {
   host: {
     ultimateRoot: string
     projects(): Promise<ProjetoDoHost[]>
-    /** As conversas deste host, com o `busy` do grafo de tarefas vivo. */
+    /** This host's conversations, with the `busy` of the live task graph. */
     conversations(): readonly { busy: boolean }[]
     need<S>(api: { name: string }): S
   }
 }
 
-/** As medidas de um host de pé: `null` é o que ele não respondeu. */
+/** The measurements of a host that is up: `null` is what it did not answer. */
 interface Medidas {
   working: number | null
   perguntasAbertas: number | null
   motivo?: string
 }
 
-/** Quantas conversas deste host estão trabalhando agora. */
+/** How many conversations of this host are working now. */
 const trabalhando = (ctx: Contexto) => ctx.host.conversations().filter((item) => item.busy).length
 
 /**
- * Quantas perguntas esperam resposta neste host. O serviço `messages` é quem sabe (é a mesma conta do
- * painel de perguntas); quando ele não responde, a conta não vira zero — vira `null`.
+ * How many questions wait for an answer in this host. The `messages` service is the one that knows (it is
+ * the same count as the questions panel); when it does not answer, the count does not become zero — it
+ * becomes `null`.
  */
 async function abertas(ctx: Contexto): Promise<number | null> {
   try {
@@ -146,7 +151,7 @@ async function abertas(ctx: Contexto): Promise<number | null> {
   }
 }
 
-/** O motivo em uma linha curta, do jeito que ele cabe no `title` de uma linha da barra. */
+/** The reason in one short line, the way it fits in the `title` of a row of the rail. */
 function motivo(erro: unknown): string {
   if (erro instanceof Error) {
     if (erro.name === 'TimeoutError') return `no answer in ${ESPERA / 1000}s`
@@ -156,9 +161,9 @@ function motivo(erro: unknown): string {
 }
 
 /**
- * Pergunta a outro host desta máquina quantas conversas dele estão trabalhando e quantas perguntas
- * esperam resposta. A `Origin` do alvo é o que o admit dele aceita em loopback; um host que não
- * responde (ou não tem esta extensão) devolve um erro, e quem chamou mostra `unavailable`.
+ * Asks another host of this machine how many of its conversations are working and how many questions wait
+ * for an answer. The target's `Origin` is what its `admit` accepts on loopback; a host that does not
+ * answer (or does not have this extension) returns an error, and whoever called shows `unavailable`.
  */
 async function perguntar(
   url: string,
@@ -179,17 +184,17 @@ async function perguntar(
     throw new Error(typeof corpo.error === 'string' ? corpo.error : `HTTP ${resposta.status}`)
   const working = numero(corpo.result?.working)
   const perguntasAbertas = numero(corpo.result?.perguntasAbertas)
-  // Uma resposta sem nenhum dos dois números não é medida nenhuma: é como se não tivesse respondido.
+  // An answer with neither of the two numbers is no measurement at all: it is as if it had not answered.
   if (working === null && perguntasAbertas === null) throw new Error('the answer carried no count')
   return { working, perguntasAbertas }
 }
 
-/** Um número de medida, ou `null` para um valor torto; o mesmo critério de `projetos.ts`. */
+/** A measurement number, or `null` for a crooked value; the same criterion as `projetos.ts`. */
 function numero(valor: unknown): number | null {
   return typeof valor === 'number' && Number.isFinite(valor) && valor >= 0 ? valor : null
 }
 
-/** Uma linha da seção a partir do que se mediu: nunca inventa um número que não veio. */
+/** A row of the section from what was measured: it never invents a number that did not come. */
 function montar(projeto: ProjetoDoHost, medidas?: Medidas): Projeto {
   const cmd = comando(projeto.root)
   return {
@@ -208,7 +213,7 @@ function montar(projeto: ProjetoDoHost, medidas?: Medidas): Projeto {
   }
 }
 
-/** O nome que a ação recebeu, ou um erro: nomes de projeto, nunca caminhos. */
+/** The name the action received, or an error: project names, never paths. */
 function nomeDoArgumento(args: JsonValue): string {
   const valor =
     args && typeof args === 'object' && !Array.isArray(args)
@@ -218,14 +223,14 @@ function nomeDoArgumento(args: JsonValue): string {
   return valor.trim()
 }
 
-/** O projeto pelo nome, lido agora do disco (`host.projects()` lê o lock a cada chamada). */
+/** The project by name, read from disk now (`host.projects()` reads the lock on every call). */
 async function procurar(ctx: Contexto, name: string): Promise<ProjetoDoHost> {
   const projeto = (await ctx.host.projects()).find((item) => item.name === name)
   if (!projeto) throw new Error(`Unknown project ${JSON.stringify(name)}`)
   return projeto
 }
 
-/** O pid está vivo? Um processo de outro dono (EPERM) conta como vivo. */
+/** Is the pid alive? A process of another owner (EPERM) counts as alive. */
 function vivo(pid: number): boolean {
   try {
     process.kill(pid, 0)
@@ -235,7 +240,7 @@ function vivo(pid: number): boolean {
   }
 }
 
-/** O lock de um home, relido agora: `pid` sem processo vivo ainda é um lock, mas não é um host. */
+/** A home's lock, re-read now: a `pid` with no live process is still a lock, but it is not a host. */
 async function lerLock(home: string): Promise<{ pid: number; port?: number } | undefined> {
   try {
     const lido = JSON.parse(await readFile(join(home, 'ultimate.lock'), 'utf8')) as {
@@ -250,7 +255,8 @@ async function lerLock(home: string): Promise<{ pid: number; port?: number } | u
   }
 }
 
-/** O pid que esta extensão subiu para aquele home, se foi ela e se ele ainda é o do registo. */
+/** The pid this extension brought up for that home, if it was this extension and it is still the
+ * record's. */
 async function lembrado(home: string): Promise<number | undefined> {
   try {
     const lido = JSON.parse(await readFile(join(home, REGISTO), 'utf8')) as { pid?: unknown }
@@ -267,20 +273,22 @@ async function lembrar(home: string, pid: number, port: number) {
   )
 }
 
-/** Esquece o registo, só quando ele ainda nomeia `pid`: o pid de outro não se apaga por engano. */
+/** Forgets the record, only when it still names `pid`: another one's pid is not erased by mistake. */
 async function esquecer(home: string, pid: number | undefined) {
   if ((await lembrado(home)) === pid) await rm(join(home, REGISTO), { force: true })
 }
 
-/** O ambiente do home do usuário, como o harness o resolve: `ULTIMATE_USER_HOME` quando há (uma prévia
- * isolada, um home de testes), senão o do sistema. É dele que saem os projetos e as settings. */
+/** The environment of the user's home, as the harness resolves it: `ULTIMATE_USER_HOME` when there is
+ * one (an isolated preview, a test home), otherwise the system's. The projects and the settings come from
+ * it. */
 function usuario(): string {
   return process.env.ULTIMATE_USER_HOME ?? homedir()
 }
 
 /**
- * As settings desta máquina, lidas na hora: o objeto, ou o motivo de ele não servir para uma escrita. Um
- * arquivo ausente é um objeto vazio — desligar o splash cria o arquivo, ligar não tem o que criar.
+ * This machine's settings, read on the spot: the object, or the reason it does not serve for a write. A
+ * missing file is an empty object — turning the splash off creates the file, turning it on has nothing to
+ * create.
  */
 async function lerSettings(): Promise<{ settings?: Record<string, unknown>; erro?: string }> {
   const path = settingsDoUsuario(usuario())
@@ -302,9 +310,10 @@ async function lerSettings(): Promise<{ settings?: Record<string, unknown>; erro
 }
 
 /**
- * Grava as settings por um temporário ao lado e um `rename`: um JSON pela metade não existe para quem lê o
- * arquivo no meio do caminho. Se o arquivo é um link (settings em dotfiles), é o alvo que se reescreve —
- * o link fica. O JSON é escrito normalizado, em dois espaços: a formatação de antes se perde.
+ * Writes the settings through a temporary beside it and a `rename`: a half JSON does not exist for whoever
+ * reads the file in the middle of the way. If the file is a link (settings in dotfiles), it is the target
+ * that is rewritten — the link stays. The JSON is written normalised, in two spaces: the formatting from
+ * before is lost.
  */
 async function escreverSettings(path: string, settings: Record<string, unknown>) {
   const alvo = await realpath(path).catch(() => path)
@@ -319,20 +328,24 @@ async function escreverSettings(path: string, settings: Record<string, unknown>)
 }
 
 /**
- * O splash como os settings **desta máquina** o deixam agora, lido a cada chamada: nada em memória, porque
- * a extensão recarrega entre uma e outra. Um arquivo que não se lê conta como ligado — é o que o core
- * também faz com ele.
+ * The splash as **this machine's** settings leave it now, read on every call: nothing in memory,
+ * because the extension reloads between one and the other. A file that cannot be read counts as on —
+ * which is what the core does with it too.
  */
 async function splashAgora(): Promise<boolean> {
   return splashLigado((await lerSettings()).settings)
 }
 
-/** O ambiente do host que se sobe: a identidade deste host não vale para outro projeto. */
+/**
+ * The environment of the host that is brought up: the identity of this host is not worth anything to
+ * another project.
+ */
 function ambiente(home: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     ULTIMATE_HOME: home,
-    // O filho lê o mesmo `~/.ultimate` deste host — numa prévia isolada, a cópia privada, não a do sistema.
+    // The child reads this host's same `~/.ultimate` — in an isolated preview, the private copy, not the
+    // system's.
     ULTIMATE_USER_HOME: usuario(),
     ULTIMATE_NO_OPEN: '1',
   }
@@ -348,7 +361,10 @@ function ambiente(home: string): NodeJS.ProcessEnv {
   return env
 }
 
-/** Sobe o processo destacado, com a saída no log do projeto; `detached` é o `setsid` que o solta. */
+/**
+ * Brings the detached process up, with the output in the project's log; `detached` is the `setsid` that
+ * lets it go.
+ */
 function lancar(
   programa: string,
   args: string[],
@@ -369,15 +385,18 @@ function lancar(
   }
 }
 
-/** A porta responde? A saúde de um host que se acabou de subir é a resposta em HTTP, não o bind. */
+/**
+ * Does the port answer? The health check of a host that has just been brought up is the HTTP answer, not
+ * the bind.
+ */
 async function saude(url: string, saiu: () => string | undefined): Promise<string | undefined> {
   const limite = Date.now() + ESPERA_SUBIDA
   for (;;) {
     try {
-      // Enquanto o core não abre, o supervisor segura a conexão sem responder: é o prazo que decide.
+      // Until the core opens, the supervisor holds the connection without answering: the deadline decides.
       if ((await fetch(`${url}/`, { signal: AbortSignal.timeout(1500) })).ok) return undefined
     } catch {
-      // Ainda não atende.
+      // Not answering yet.
     }
     const motivo = saiu()
     if (motivo) return motivo
@@ -386,19 +405,19 @@ async function saude(url: string, saiu: () => string | undefined): Promise<strin
   }
 }
 
-/** A linha do log do host que se subiu que diz por que ele não subiu, para o popover do tile. */
+/** The log line of the host that was brought up that says why it did not come up, for the tile's panel. */
 async function cauda(log: string): Promise<string> {
   const texto = await readFile(log, 'utf8').catch(() => '')
   const linhas = texto
     .split('\n')
     .map((linha) => linha.trim())
     .filter(Boolean)
-  // O erro que interessa é a linha que o processo nomeia; a pilha abaixo dela é ruído.
+  // The error that matters is the line the process names; the stack below it is noise.
   const erro = linhas.find((linha) => /^(?:Error|\[error\])/.test(linha))
   return (erro ?? linhas.slice(-2).join(' · ')).slice(0, 240)
 }
 
-/** Encerra um processo que esta extensão acabou de subir: TERM e, passado o prazo, KILL. */
+/** Terminates a process this extension has just brought up: TERM and, past the deadline, KILL. */
 async function encerrar(pid: number) {
   try {
     process.kill(pid, 'SIGTERM')
@@ -411,13 +430,13 @@ async function encerrar(pid: number) {
   try {
     process.kill(pid, 'SIGKILL')
   } catch {
-    // Saiu entre o teste e o sinal.
+    // It exited between the test and the signal.
   }
 }
 
 /**
- * O host parou e o lock sumiu? Espera até isso virar verdade, e devolve se virou: o lock de outro pid
- * que não o nosso conta como parado (outro host tomou o projeto).
+ * Did the host stop and the lock vanish? It waits until that becomes true, and returns whether it did: a
+ * lock of a pid other than ours counts as stopped (another host took the project).
  */
 async function esperarSumir(home: string, pid: number, prazo: number): Promise<boolean> {
   const limite = Date.now() + prazo
@@ -430,8 +449,8 @@ async function esperarSumir(home: string, pid: number, prazo: number): Promise<b
 }
 
 /**
- * Para o host de pid `pid` e confere que o lock daquele projeto sumiu. Mata **só** esse pid: nada de
- * grupo, nada de `pkill`, nada de matar por porta.
+ * Stops the host of pid `pid` and checks that that project's lock is gone. It kills **only** that pid: no
+ * group, no `pkill`, no killing by port.
  */
 async function desligar(home: string, pid: number) {
   try {
@@ -439,17 +458,18 @@ async function desligar(home: string, pid: number) {
   } catch (erro) {
     if ((erro as NodeJS.ErrnoException).code !== 'ESRCH')
       throw new Error(`Cannot stop pid ${pid}: ${motivo(erro)}`)
-    // O pid sumiu antes do sinal: não há o que parar. Se o lock dele ficou, a linha diz isso.
+    // The pid vanished before the signal: there is nothing to stop. If its lock stayed, the row says so.
     if ((await lerLock(home))?.pid === pid)
       throw new Error(`pid ${pid} was already gone, and its lock file was left behind`)
     return
   }
   if (await esperarSumir(home, pid, ESPERA_PARADA)) return
-  // Não desligou sozinho: SIGKILL no mesmo pid. Um host morto assim não fecha o lock — e a linha diz.
+  // It did not go down by itself: SIGKILL on the same pid. A host killed that way does not close the lock —
+  // and the row says so.
   try {
     process.kill(pid, 'SIGKILL')
   } catch {
-    // Saiu entre o teste e o sinal.
+    // It exited between the test and the signal.
   }
   const limite = Date.now() + 3000
   while (vivo(pid) && Date.now() < limite) await sleep(100)
@@ -458,7 +478,7 @@ async function desligar(home: string, pid: number) {
     throw new Error(`pid ${pid} only stopped with SIGKILL: its lock file was left behind`)
 }
 
-/** A porta que se pode abrir em loopback agora. */
+/** The port that can be opened on loopback now. */
 function portaLivre(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const servidor = createServer()
@@ -467,13 +487,16 @@ function portaLivre(port: number): Promise<boolean> {
   })
 }
 
-/** A ação pediu medida? O rail chama `listar({ medir: false })`: nenhum número aparece num tile. */
+/**
+ * Did the action ask for a measurement? The rail calls `listar({ medir: false })`: no number appears on a
+ * tile.
+ */
 function pediuMedida(args: JsonValue): boolean {
   if (!args || typeof args !== 'object' || Array.isArray(args)) return true
   return (args as { medir?: unknown }).medir !== false
 }
 
-/** O botão do splash pediu ligado ou desligado: um booleano, nunca o que se adivinha de um `undefined`. */
+/** Did the splash button ask for on or off: a boolean, never what one guesses from an `undefined`. */
 function ligadoDoArgumento(args: JsonValue): boolean {
   const valor =
     args && typeof args === 'object' && !Array.isArray(args)
@@ -483,7 +506,7 @@ function ligadoDoArgumento(args: JsonValue): boolean {
   return valor
 }
 
-/** O caminho que o diálogo do `+` mandou, como texto: vazio não é caminho, e o diálogo pede um. */
+/** The path the `+` dialog sent, as text: empty is not a path, and the dialog asks for one. */
 function caminhoDoArgumento(args: JsonValue): string {
   const valor =
     args && typeof args === 'object' && !Array.isArray(args)
@@ -495,11 +518,11 @@ function caminhoDoArgumento(args: JsonValue): string {
 }
 
 /**
- * Apaga o home que uma primeira subida criou e que não chegou a virar projeto. O diretório só existe
- * porque o processo filho o fez (`bin/ultimate.ts` cria `ULTIMATE_HOME` antes de abrir o core); se ele
- * morreu antes de escrever o `project.json`, aquele home é lixo — e `listar` lê todo diretório sob
- * `~/.ultimate/projects`, então ele apareceria para sempre como um tile sem caminho. Um `project.json`
- * escrito, ou um host vivo segurando o lock, significam que o projeto é de verdade e nada é tocado.
+ * Deletes the home a first start created and that never became a project. The directory exists only because
+ * the child process made it (`bin/ultimate.ts` creates `ULTIMATE_HOME` before opening the core); if it died
+ * before writing the `project.json`, that home is rubbish — and `listar` reads every directory under
+ * `~/.ultimate/projects`, so it would appear for ever as a tile without a path. A `project.json`
+ * written, or a live host holding the lock, mean that the project is real and nothing is touched.
  */
 async function descartarHome(home: string) {
   const escrito = await readFile(join(home, 'project.json'), 'utf8').then(
@@ -513,10 +536,10 @@ async function descartarHome(home: string) {
 }
 
 /**
- * Sobe o host de um projeto e só devolve quando a porta responde; o que não sobe no prazo é encerrado
- * e o erro sai com a cauda do log. Um projeto que ainda não tem home (`pastaNova`) escreve o log num
- * diretório temporário e só ganha o registo do pid depois de responder — o home é do host, não desta
- * extensão.
+ * Brings a project's host up and only returns when the port answers; what does not come up in the
+ * deadline is terminated and the error leaves with the tail of the log. A project that has no home yet
+ * (`pastaNova`) writes the log in a temporary directory and only gains the pid's record after answering —
+ * the home is the host's, not this extension's.
  */
 async function subir(
   ctx: Contexto,
@@ -539,27 +562,28 @@ async function subir(
   child.once('exit', (code, sinal) => {
     saida ??= `the process exited (${sinal ?? `code ${code}`})`
   })
-  // Sem pid o processo nem chegou a nascer, e o caminho do projeto é o que costuma faltar.
+  // Without a pid the process was not even born, and the project's path is what usually is missing.
   if (pid === undefined) throw new Error(`Could not start ${projeto.name} in ${root}`)
-  // Gravado logo depois do spawn: a janela entre um e outro é o único caso em que o host fica sem
-  // registo — e o pior que isso custa é um clique de confirmação a mais (ver README).
+  // Written right after the spawn: the window between the two is the only case in which the host stays
+  // without a record — and the worst it costs is one extra confirmation click (see README).
   if (!options.pastaNova) await lembrar(projeto.home, pid, port)
   const url = `http://127.0.0.1:${port}`
   const falha = await saude(url, () => saida)
-  // O host que atende pode não ser o nosso: um clique anterior, ou outro processo, chegou primeiro.
+  // The host that answers may not be ours: an earlier click, or another process, got there first.
   const dono = await lerLock(projeto.home)
   const outro = dono && dono.pid !== pid && vivo(dono.pid) ? dono : undefined
   if (falha !== undefined && !outro) {
     await encerrar(pid)
     await esquecer(projeto.home, pid)
     const resto = await cauda(options.log)
-    // Uma pasta que não virou projeto não pode deixar o home que o processo criou para trás.
+    // A folder that did not become a project cannot leave the home the process created behind.
     if (options.pastaNova) await descartarHome(projeto.home)
     throw new Error(
       `${projeto.name} did not answer on :${port} — ${falha}${resto ? `: ${resto}` : ''}`,
     )
   }
-  // O home existe agora (quem atende escreveu o lock nele), e é onde o registo deste pid vale — ou não.
+  // The home exists now (whoever answers wrote the lock in it), and it is where this pid's record counts —
+  // or does not.
   if (dono?.pid === pid) await lembrar(projeto.home, pid, port)
   else await esquecer(projeto.home, pid)
   const emPe = outro ?? (dono?.pid === pid ? dono : undefined)
@@ -571,14 +595,15 @@ async function subir(
 
 export const actions = {
   /**
-   * Os projetos da máquina, com o estado e o comando. Sem argumento, mede cada host de pé (é o que a
-   * lista do celular mostra); `{ medir: false }` é a leitura barata do rail, que não mostra número.
+   * This machine's projects, with the state and the command. With no argument, it measures each host that
+   * is up (it is what the phone's list shows); `{ medir: false }` is the rail's cheap read, which shows no
+   * number.
    */
   async listar(args: JsonValue, ctx: Contexto): Promise<Secao> {
-    // Um home sem `project.json` (uma subida que morreu antes de registrar) não é projeto de nada:
-    // não tem caminho, não se sobe e não se mede — mostrar um tile dele seria mentir sobre a máquina.
+    // A home without a `project.json` (a start that died before registering) is no project of anyone's:
+    // it has no path, it is neither brought up nor measured — showing its tile would lie about the machine.
     const projetos = (await ctx.host.projects()).filter((projeto) => projeto.root)
-    // O botão do pé do rail diz o estado lido agora, não o de uma abertura anterior.
+    // The button at the bottom of the rail says the state read now, not the one from an earlier opening.
     const splash = await splashAgora()
     const at = new Date().toISOString()
     if (!pediuMedida(args))
@@ -586,9 +611,9 @@ export const actions = {
     const aqui: Medidas = { working: trabalhando(ctx), perguntasAbertas: await abertas(ctx) }
     const linhas = await Promise.all(
       projetos.map(async (projeto): Promise<Projeto> => {
-        // O projeto desta janela: as medidas são as deste host, sem viagem nenhuma.
+        // This window's project: the measurements are this host's, with no trip at all.
         if (projeto.current) return montar(projeto, aqui)
-        // Parado: não há a quem perguntar, e a tela mostra o comando no lugar da medida.
+        // Stopped: there is no one to ask, and the screen shows the command in place of the measurement.
         if (!projeto.running) return montar(projeto)
         try {
           return montar(projeto, await perguntar(projeto.running.url, ctx.signal))
@@ -605,22 +630,24 @@ export const actions = {
   },
 
   /**
-   * Liga ou desliga a animação do splash nas settings **desta máquina**
-   * (`<home do usuário>/.ultimate/settings.json`): `splash` entra em `extensions.disable` (desligar) ou
-   * sai dela (ligar), e todas as outras chaves do arquivo ficam como estão. É o único lugar em que esta
-   * extensão escreve fora do home de um projeto que ela mesma subiu, e o settings de um projeto nunca é
-   * tocado — um projeto pode dizer o contrário por cima, e essa é a decisão dele.
+   * Turns the splash animation on or off in **this machine's** settings
+   * (`<user home>/.ultimate/settings.json`): `splash` enters `extensions.disable` (turning off) or leaves
+   * it (turning on), and every other key of the file stays as it is. It is the only place where this
+   * extension writes outside the home of a project it brought up itself, and a project's settings is never
+   * touched — a project can say the opposite on top, and that is its decision.
    *
-   * O que não se conseguiria preservar é recusado **sem escrever**: JSON inválido, arquivo que não é
-   * objeto, `extensions` que não é objeto, `disable` que não é lista de nomes — o core rejeitaria o
-   * arquivo inteiro, e o usuário perderia as outras chaves. A escrita é por temporário e `rename`.
+   * What could not be preserved is refused **without writing**: invalid JSON, a file that is not an object,
+   * an `extensions` that is not an object, a `disable` that is not a list of names — the core would reject
+   * the whole file, and the user would lose the other keys. The write is through a temporary and a
+   * `rename`.
    */
   async splash(args: JsonValue, _ctx: Contexto): Promise<Splash> {
     const ligado = ligadoDoArgumento(args)
     const path = settingsDoUsuario(usuario())
     const lido = await lerSettings()
     if (lido.erro) throw new Error(lido.erro)
-    // Sem arquivo, o ponto de partida é um objeto vazio: desligar cria o arquivo, ligar não cria nada.
+    // With no file, the starting point is an empty object: turning it off creates the file, turning it on
+    // creates nothing.
     const antes = lido.settings ?? {}
     let depois: Record<string, unknown>
     try {
@@ -628,20 +655,20 @@ export const actions = {
     } catch (erro) {
       throw new Error(`Cannot change the splash: ${path}: ${motivo(erro)}. Nothing was written`)
     }
-    // `ajustarSplash` devolve o mesmo objeto quando não há o que mudar: nada se reescreve à toa.
+    // `ajustarSplash` returns the same object when nothing changes: nothing is rewritten for nothing.
     if (depois !== antes) await escreverSettings(path, depois)
     return { splash: ligado }
   },
 
   /**
-   * O que se mediu num projeto agora: as conversas trabalhando e as perguntas sem resposta, com a hora
-   * — o popover do tile pede isto quando abre, e só ele mostra esses números. Um host que não responde
-   * devolve `null` nos dois e o motivo, nunca zero.
+   * What was measured in a project now: the conversations working and the questions without an answer,
+   * with the time — the tile's panel asks for this when it opens, and only it shows those numbers. A host
+   * that does not answer returns `null` on both and the reason, never zero.
    */
   async medir(args: JsonValue, ctx: Contexto): Promise<Medida> {
     const projeto = await procurar(ctx, nomeDoArgumento(args))
     const at = new Date().toISOString()
-    // O projeto desta janela: as medidas são as deste host, sem viagem nenhuma.
+    // This window's project: the measurements are this host's, with no trip at all.
     if (projeto.current)
       return { working: trabalhando(ctx), perguntasAbertas: await abertas(ctx), at }
     if (!projeto.running)
@@ -654,9 +681,9 @@ export const actions = {
   },
 
   /**
-   * Só este host: quantas conversas dele estão trabalhando agora e quantas perguntas esperam resposta.
-   * É o que outro host da máquina pergunta para medir um tile; nunca sai daqui para perguntar a mais
-   * ninguém.
+   * This host only: how many of its conversations are working now and how many questions wait for an
+   * answer. It is what another host of the machine asks to measure a tile; it never leaves here to ask
+   * anyone else.
    */
   async estado(_args: JsonValue, ctx: Contexto): Promise<Estado> {
     return {
@@ -667,24 +694,24 @@ export const actions = {
   },
 
   /**
-   * Sobe o host de um projeto parado, na primeira porta livre; um host que já roda não é tocado — a
-   * linha volta como está, e o popover diz em que porta ele está.
+   * Brings a stopped project's host up, on the first free port; a host that already runs is not touched —
+   * the row comes back as it is, and the tile's panel says on which port it is.
    */
   async iniciar(args: JsonValue, ctx: Contexto): Promise<Projeto> {
     const name = nomeDoArgumento(args)
     const projeto = await procurar(ctx, name)
-    // A guarda é o pid vivo: um lock de pid morto é um projeto parado, e é o `undefined` aqui.
+    // The guard is the live pid: a dead pid's lock is a stopped project, and it is the `undefined` here.
     if (projeto.running) return montar(projeto)
     if (projeto.current) throw new Error(`${name} runs this window`)
     return subir(ctx, projeto, { log: join(projeto.home, LOG) })
   },
 
   /**
-   * Cria um projeto a partir de uma pasta: expande `~`, exige um diretório de verdade, e sobe o host
-   * dele como o `iniciar` faz. Uma pasta que já é um projeto da lista é selecionada — e, se estiver
-   * parada, subida — em vez de um segundo host para a mesma raiz. A primeira execução daquele projeto,
-   * o onboarding e a decisão de confiança dele acontecem na janela dele: esta extensão não decide nada
-   * por ele. O home do projeto novo nasce com o host, não aqui.
+   * Creates a project from a folder: it expands `~`, demands a real directory, and brings its host up as
+   * `iniciar` does. A folder that is already a project of the list is selected — and, if it is stopped,
+   * brought up — instead of a second host for the same root. That project's first run, the onboarding and
+   * its trust decision happen in its window: this extension decides nothing for it. The new project's home
+   * is born with the host, not here.
    */
   async criar(args: JsonValue, ctx: Contexto): Promise<ResultadoDaCriacao> {
     const absoluto = caminhoAbsoluto(caminhoDoArgumento(args), homedir())
@@ -703,14 +730,15 @@ export const actions = {
         projeto: await subir(ctx, existente, { log: join(existente.home, LOG) }),
       }
     }
-    // Duas pastas com o mesmo nome de projeto não se distinguem aqui: as ações falam por nome, e um
-    // segundo `app` faria o tile do primeiro responder pelo segundo (e pará-lo no lugar dele).
+    // Two folders with the same project name cannot be told apart here: the actions speak by name, and a
+    // second `app` would make the first's tile answer for the second (and stop it in its place).
     const homonimo = projetos.find((projeto) => projeto.name === basename(root))
     if (homonimo)
       throw new Error(
         `A project called ${basename(root)} already exists (${homonimo.root ?? homonimo.home}); two projects with the same folder name cannot be told apart here`,
       )
-    // Pasta nova: o home nasce com o host, então o log fica num diretório temporário até ele responder.
+    // New folder: the home is born with the host, so the log stays in a temporary directory until it
+    // answers.
     const temp = await mkdtemp(join(tmpdir(), 'ultimate-projetos-'))
     try {
       const projeto: ProjetoDoHost = {
@@ -729,9 +757,9 @@ export const actions = {
   },
 
   /**
-   * Deita o host de um projeto: só o pid do lock daquele projeto, conferindo que o lock sumiu. Um host
-   * que esta extensão não subiu pede confirmação — a ação devolve `precisaConfirmar` e nada é tocado
-   * até a mesma ação chegar com `confirm: true`.
+   * Brings a project's host down: only the pid of that project's lock, checking that the lock is gone. A
+   * host this extension did not bring up asks for confirmation — the action returns `precisaConfirmar`
+   * and nothing is touched until the same action arrives with `confirm: true`.
    */
   async parar(args: JsonValue, ctx: Contexto): Promise<ResultadoDaParada> {
     const name = nomeDoArgumento(args)

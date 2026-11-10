@@ -1,29 +1,30 @@
 /**
- * O rail “Projetos” na borda esquerda da janela: uma coluna de 48px, presente em todas as superfícies,
- * com um tile por projeto — os hosts de pé em cima, uma linha fina, os parados embaixo (mais apagados)
- * e o `+` no pé.
+ * The "Projects" rail on the left edge of the window: a 48px column, present on every surface, with one
+ * tile per project — the hosts that are up on top, a thin line, the stopped ones below (dimmer) and the
+ * `+` at the bottom.
  *
- * O bloco inteiro é o alvo do clique, e o número da porta não aparece nele: um projeto de pé abre
- * naquele projeto nesta mesma aba (é um trocador, não um espiador; ⌘/Ctrl+clique abre em aba nova, como
- * qualquer link), um projeto parado sobe, e o projeto desta janela não tem ação nenhuma — só o
- * `text-brand`. A porta continua ali, mas como **endereço** do link: `:porta` só se lê no painel do
- * tile, junto com o estado escrito e as medidas.
+ * The whole block is the click target, and the port number does not appear on it: a project that is up
+ * opens that project in this same tab (it is a switcher, not a peeker; ⌘/Ctrl+click opens a new tab, like
+ * any link), a stopped project comes up, and this window's project has no action at all — only
+ * `text-brand`. The port is still there, but as the link's **address**: `:port` is read only in the tile's
+ * panel, together with the state written out and the measurements.
  *
- * O painel abre no hover e no foco, e é ele que diz o que o tile não cabe: `running` / `stopped`, a
- * porta, o caminho, e `1 working · 1 question` **medido quando o painel abre**, com a hora. Parar e
- * copiar o comando moram nele — fora do link, porque um `<button>` dentro de um `<a>` é HTML inválido.
- * Um projeto parado não mostra medida; um host que não responde mostra `unavailable` com o motivo,
- * nunca `0`.
+ * The panel opens on hover and on focus, and it is what says what the tile cannot fit: `running` /
+ * `stopped`, the port, the path, and `1 working · 1 question` **measured when the panel opens**, with the
+ * time. Stopping and copying the command live in it — outside the link, because a `<button>` inside an
+ * `<a>` is invalid HTML. A stopped project shows no measurement; a host that does not answer shows
+ * `unavailable` with the reason, never `0`.
  *
- * O `+` abre o diálogo de um projeto novo: um caminho (`~/src/novo`), validado e subido como o `iniciar`
- * sobe — primeira porta livre, destacado, sem janela, saúde em 20 s. A partir daí o projeto é dele: a
- * primeira execução, o onboarding e a decisão de confiança daquela pasta acontecem na janela dele.
+ * The `+` opens a new project's dialog: a path (`~/src/my-project`), validated and brought up as `iniciar`
+ * brings one up — first free port, detached, without a window, health in 20 s. From there the project is
+ * its own: the first run, the onboarding and the trust decision for that folder happen in its window.
  *
- * No celular não há rail (não há largura para um): a lista compacta da sidebar — a de antes, com as
- * medidas e os botões de subir e parar — continua sendo o trocador de projeto, e no desktop ela deixa
- * de existir para não haver dois.
+ * On the phone there is no rail (there is no width for one): the sidebar's compact list — the one from
+ * before, with the measurements and the buttons to bring up and stop — keeps being the project switcher,
+ * and on the desktop it ceases to exist so that there are not two.
  *
- * Sem poll: o rail lê ao abrir, as ações releem ao terminar, e o botão de atualizar é a outra leitura.
+ * No poll: the rail reads on opening, the actions re-read on finishing, and the refresh button is the other
+ * reading.
  */
 import {
   CheckIcon,
@@ -81,47 +82,49 @@ import type {
   Splash,
 } from './tipos.ts'
 
-/** `{ medir?: false }` → os projetos da máquina. O rail pede a leitura barata: nenhum tile mostra número. */
+/** `{ medir?: false }` → this machine's projects. The rail asks the cheap read: no tile shows a number. */
 const SecaoAction = actionRef<{ medir?: boolean }, Secao>('projetos', 'listar')
 
-/** `{ name }` → o que se mediu naquele host agora, com a hora. O painel do tile pede quando abre. */
+/** `{ name }` → what was measured in that host now, with the time. The tile's panel asks when it opens. */
 const MedirAction = actionRef<{ name: string }, Medida>('projetos', 'medir')
 
-/** `{ name }` → sobe o host daquele projeto e só volta quando a porta responde. */
+/** `{ name }` → brings that project's host up and only returns when the port answers. */
 const IniciarAction = actionRef<{ name: string }, Projeto>('projetos', 'iniciar')
 
-/** `{ name, confirm? }` → deita o host daquele projeto, ou diz que ele pede confirmação. */
+/** `{ name, confirm? }` → brings that project's host down, or says that it asks for confirmation. */
 const PararAction = actionRef<{ name: string; confirm?: boolean }, ResultadoDaParada>(
   'projetos',
   'parar',
 )
 
-/** `{ caminho }` → sobe o host de uma pasta (ou seleciona o projeto que já é aquela pasta). */
+/** `{ caminho }` → brings a folder's host up (or selects the project that is already that folder). */
 const CriarAction = actionRef<{ caminho: string }, ResultadoDaCriacao>('projetos', 'criar')
 
-/** `{ enabled }` → liga ou desliga a animação do splash nas settings desta máquina. */
+/** `{ enabled }` → turns the splash animation on or off in this machine's settings. */
 const SplashAction = actionRef<{ enabled: boolean }, Splash>('projetos', 'splash')
 
-/** De quanto em quanto tempo passar o ponteiro no rail pode refazer a leitura de quem está de pé. */
+/** How often passing the pointer over the rail may redo the reading of who is up. */
 const INTERVALO_DA_ONDA = 15_000
 
 export default defineWebExtension({
   slots: {
-    // A coluna na borda esquerda: existe em toda superfície, e no celular se cala.
+    // The column on the left edge: it exists on every surface, and on the phone it falls silent.
     'shell.rail': Rail,
-    // A lista de antes, que no celular continua sendo o trocador de projeto.
+    // The list from before, which on the phone keeps being the project switcher.
     sidebar: { component: Lista, order: -10 },
   },
 })
 
-/** O rail — menos no celular, onde não há largura para ele e a lista da sidebar é o trocador. */
+/** The rail — except on the phone, where there is no width for it and the sidebar's list is the
+ * switcher. */
 function Rail() {
   const viewport = useViewport()
   if (viewport === 'phone') return null
   return <Coluna />
 }
 
-/** A lista compacta — só no celular: no desktop e no tablet quem troca de projeto é o rail, um só. */
+/** The compact list — on the phone only: on the desktop and on the tablet the rail is the one that
+ * switches projects, a single one. */
 function Lista() {
   const viewport = useViewport()
   if (viewport !== 'phone') return null
@@ -129,16 +132,16 @@ function Lista() {
 }
 
 /**
- * A coluna: os rodando, a linha fina, os parados, e no pé o ⟳, o `+` e o botão da animação do splash. O
- * tile é uma peça só — o link (ou o botão de subir), o ponto de presença e o painel dele —, então abrir o
- * painel é abrir um `<div>` de 32px que já estava ali.
+ * The column: the running ones, the thin line, the stopped ones, and at the bottom the ⟳, the `+` and the
+ * splash animation's button. The tile is a single piece — the link (or the button that brings it up), the
+ * presence dot and its panel —, so opening the panel is opening a 32px `<div>` that was already there.
  */
 function Coluna() {
   const { data, error, loading, refetch } = useAction(SecaoAction, { medir: false })
   const [novo, setNovo] = useState(false)
-  // A onda: o que cada host de pé está fazendo, por projeto, com a hora de cada medida. Ela é refeita ao
-  // montar, ao entrar no rail (no máximo a cada 15 s), no ⟳ e depois de cada ação — e nunca por um timer:
-  // o indicador diz de quando é, e uma leitura nova corrige.
+  // The wave: what each host that is up is doing, by project, with the time of each measurement. It is
+  // remade on mounting, on entering the rail (at most once every 15 s), on ⟳ and after every action — and
+  // never by a timer: the indicator says when it is from, and a new reading corrects it.
   const [medidas, setMedidas] = useState<Record<string, Medida>>({})
   const [medindo, setMedindo] = useState(false)
   const ultima = useRef(0)
@@ -148,10 +151,11 @@ function Coluna() {
     ultima.current = Date.now()
     setMedindo(true)
     try {
-      // A leitura completa: o `estado` de cada host de pé, em paralelo, com o prazo que já existe.
+      // The full reading: the `estado` of each host that is up, in parallel, with the deadline that already
+      // exists.
       setMedidas(ondaDaLeitura(await api.action(SecaoAction, {})))
     } catch {
-      // O rail continua com o que já sabia — e o `title` de cada tile diz de quando é.
+      // The rail keeps what it already knew — and each tile's `title` says when it is from.
     } finally {
       setMedindo(false)
     }
@@ -161,12 +165,12 @@ function Coluna() {
     void lerOnda()
   }, [lerOnda])
 
-  // A medida que o painel de um tile fez vale para aquele tile no rail também, sem outra leitura.
+  // The measurement a tile's panel made also holds for that tile on the rail, without another reading.
   const guardarMedida = useCallback((name: string, medida: Medida) => {
     setMedidas((antes) => ({ ...antes, [name]: medida }))
   }, [])
 
-  // O ⟳ e cada clique que muda a máquina releem a lista e medem todo mundo de novo.
+  // The ⟳ and every click that changes the machine re-read the list and measure everyone again.
   const atualizar = () => refetch().then(() => lerOnda(true))
   const { rodando, parados } = grupos(data?.projetos ?? [])
   return (
@@ -240,11 +244,11 @@ function Coluna() {
 }
 
 /**
- * O botão da animação do splash, no pé do rail: o ícone diz o estado (interruptor à direita = ligado) e o
- * clique faz o contrário, que é reversível e por isso não pergunta nada. O estado vem da leitura da coluna
- * (`listar`), nunca de uma variável daqui: a extensão recarrega a quente, e o arquivo pode ter mudado por
- * fora. Uma recusa — JSON inválido, arquivo sem permissão — vira `!` com o motivo no `title`, porque
- * quando ela recusa ela **não escreve nada**.
+ * The splash animation's button, at the bottom of the rail: the icon says the state (switch to the right =
+ * on) and the click does the opposite, which is reversible and therefore asks nothing. The state comes from
+ * the column's read (`listar`), never from a variable here: the extension hot-loads, and the file may have
+ * changed from outside. A refusal — invalid JSON, a file without permission — becomes `!` with the reason
+ * in the `title`, because when it refuses it **writes nothing**.
  */
 function BotaDoSplash({
   splash,
@@ -300,11 +304,11 @@ function BotaDoSplash({
 }
 
 /**
- * Um projeto no rail: 32px de iniciais, com o ponto de presença no canto e o número de perguntas quando há
- * alguma. De pé e fora desta janela é um link para o host; parado é um botão que o sobe; o desta janela é
- * um botão que só abre o painel. O painel abre no hover e no foco e é `fixed`: assim ele não é recortado
- * quando a coluna rola, e continua filho do tile na ordem do DOM, que é o que deixa o teclado chegar aos
- * botões dele.
+ * A project on the rail: 32px of initials, with the presence dot in the corner and the question count when
+ * there is one. Up and outside this window it is a link to the host; stopped it is a button that brings it
+ * up; this window's is a button that only opens the panel. The panel opens on hover and on focus and is
+ * `fixed`: that way it is not clipped when the column scrolls, and it stays a child of the tile in the DOM
+ * order, which is what lets the keyboard reach its buttons.
  */
 function Tile({
   projeto,
@@ -313,7 +317,7 @@ function Tile({
   onMedida,
 }: {
   projeto: Projeto
-  /** A última medida da onda do rail, ou a que o painel deste tile fez (a do painel vence). */
+  /** The last measurement of the rail's wave, or the one this tile's panel made (the panel's wins). */
   medida?: Medida
   onChanged: () => Promise<unknown>
   onMedida: (name: string, medida: Medida) => void
@@ -326,7 +330,7 @@ function Tile({
   const [erro, setErro] = useState<string>()
   const [medindo, setMedindo] = useState(false)
   const quadro = useRef<HTMLDivElement>(null)
-  // Fechar espera um instante: o ponteiro que atravessa o vão até o painel não o fecha no caminho.
+  // Closing waits an instant: the pointer that crosses the gap to the panel does not close it on the way.
   const saida = useRef<ReturnType<typeof setTimeout>>(undefined)
   useEffect(() => () => clearTimeout(saida.current), [])
   const depe = projeto.running !== undefined
@@ -339,14 +343,15 @@ function Tile({
   const hora = medida ? formatTime(medida.at) : undefined
   const tituloDoBotao = tituloDoTile(projeto, medida, hora)
 
-  // O que se disse de um estado não vale para o outro: uma ação nova apaga o aviso e a pergunta.
+  // What was said of one state does not hold for the other: a new action erases the warning and the
+  // question.
   useEffect(() => {
     setErro(undefined)
     setConfirmar(undefined)
   }, [depe])
 
-  // A medida é do instante em que o painel abre — e o painel diz a hora dela. Fechado, não se mede
-  // nada: o tile fica com a medida da onda do rail, que é de quando ela foi feita.
+  // The measurement is of the instant the panel opens — and the panel says when it is from. Closed, nothing
+  // is measured: the tile keeps the rail's wave measurement, which is from when it was made.
   useEffect(() => {
     if (!aberto || !depe) return undefined
     let vivo = true
@@ -357,7 +362,7 @@ function Tile({
         if (vivo) onMedida(projeto.name, resultado)
       })
       .catch((causa: unknown) => {
-        // O painel não inventa um número: o que falhou vira `unavailable` com o motivo.
+        // The panel invents no number: what failed becomes `unavailable` with the reason.
         if (vivo)
           onMedida(projeto.name, {
             working: null,
@@ -374,7 +379,7 @@ function Tile({
     }
   }, [aberto, depe, projeto.name, onMedida])
 
-  /** Abre o painel ao lado do tile: à direita, e para cima quando o tile está na metade de baixo. */
+  /** Opens the panel beside the tile: to the right, and upwards when the tile is in the lower half. */
   const abrir = () => {
     const caixa = quadro.current?.getBoundingClientRect()
     if (caixa)
@@ -387,13 +392,16 @@ function Tile({
     setAberto(true)
   }
 
-  /** O ponteiro ou o foco entrou: o painel abre (se já estava aberto, o fechamento pendente é cancelado). */
+  /**
+   * The pointer or the focus came in: the panel opens (if it was already open, the pending closing is
+   * cancelled).
+   */
   const entrar = () => {
     clearTimeout(saida.current)
     if (!aberto) abrir()
   }
 
-  /** Saiu do tile e do painel: fecha em 150 ms, para atravessar o vão não contar como saída. */
+  /** It left the tile and the panel: closes in 150 ms, so crossing the gap does not count as leaving. */
   const sair = () => {
     clearTimeout(saida.current)
     saida.current = setTimeout(fechar, 150)
@@ -405,9 +413,9 @@ function Tile({
     setConfirmar(undefined)
   }
 
-  // `Esc` fecha o painel mesmo quando ele abriu só com o ponteiro (sem foco dentro do tile), que é o
-  // caso em que nenhum `onKeyDown` do tile chegaria. Não se impede nada: quem também escuta `Esc`
-  // segue ouvindo.
+  // `Esc` closes the panel even when it opened with the pointer alone (no focus inside the tile), which is
+  // the case in which no `onKeyDown` of the tile would arrive. Nothing is prevented: whoever listens to
+  // `Esc` as well keeps listening.
   useEffect(() => {
     if (!aberto) return undefined
     const aoTeclar = (evento: KeyboardEvent) => {
@@ -463,12 +471,12 @@ function Tile({
       : depe
         ? 'border-transparent bg-accent/70 text-foreground/85 hover:bg-accent'
         : 'border-transparent text-muted-foreground/60 hover:bg-accent/40 hover:text-muted-foreground',
-    // Uma ação que falhou deixa a marca no tile (o texto inteiro está no `title` e no painel): o
-    // clique que não deu certo não pode sumir em silêncio.
+    // An action that failed leaves its mark on the tile (the whole text is in the `title` and in the
+    // panel): the click that did not work cannot vanish in silence.
     erro && 'ring-1 ring-error/60',
   )
-  // O `title` e o `aria-label` dizem a frase inteira — estado, contas e a hora da medida. O erro de uma
-  // ação vence a frase: o clique que falhou não pode sumir.
+  // The `title` and the `aria-label` say the whole sentence — state, counts and the time of the
+  // measurement. An action's error beats the sentence: the click that failed cannot vanish.
   const titulo = erro ?? tituloDoBotao
   const conteudo = pendente === 'start' ? <LoaderCircleIcon className="size-3.5 animate-spin" /> : letras
 
@@ -632,10 +640,10 @@ function Tile({
 }
 
 /**
- * Os dois indicadores do canto do tile, com a semântica e as classes do mark do app (`AgentMark`): o
- * ponto de presença — pulsando enquanto trabalha, verde ocioso, cinza parado, vazado quando o host não
- * respondeu — e, quando há pergunta sem resposta, o número em âmbar no canto de cima. O texto inteiro
- * está no `title`/`aria-label` do tile; aqui nada é lido por leitor de tela.
+ * The two indicators in the tile's corner, with the semantics and the classes of the app's mark
+ * (`AgentMark`): the presence dot — pulsing while it works, green idle, grey stopped, hollow when the host
+ * did not answer — and, when there is a question without an answer, the number in amber in the top corner.
+ * The whole sentence is in the tile's `title`/`aria-label`; here nothing is read by a screen reader.
  */
 function Sinais({ ponto, perguntas }: { ponto: Presenca; perguntas: string | undefined }) {
   return (
@@ -647,7 +655,7 @@ function Sinais({ ponto, perguntas }: { ponto: Presenca; perguntas: string | und
           ponto === 'working' && 'animate-pulse-dot bg-brand',
           ponto === 'idle' && 'bg-success',
           ponto === 'stopped' && 'bg-muted-foreground/60',
-          // Sem resposta não é ocioso: o ponto fica vazado, sem pulso e sem cor de trabalho.
+          // Not answering is not idle: the dot stays hollow, without pulse and without working colour.
           ponto === 'unavailable' && 'bg-transparent ring-muted-foreground/50',
         )}
         data-presence={ponto}
@@ -666,9 +674,9 @@ function Sinais({ ponto, perguntas }: { ponto: Presenca; perguntas: string | und
 }
 
 /**
- * O que se mediu no host, no painel: `1 working · 1 question`, com a hora da medida. Um host que não
- * respondeu mostra `unavailable` e o motivo — nunca um zero inventado, que é o que faria ignorar
- * justamente o projeto travado.
+ * What was measured in the host, in the panel: `1 working · 1 question`, with the time of the measurement.
+ * A host that did not answer shows `unavailable` and the reason — never an invented zero, which is exactly
+ * what would make one ignore the stuck project.
  */
 function PainelMedida({ medida, medindo }: { medida: Medida | undefined; medindo: boolean }) {
   if (medindo || !medida)
@@ -703,7 +711,7 @@ function PainelMedida({ medida, medindo }: { medida: Medida | undefined; medindo
   )
 }
 
-/** Um botão redondo do pé do rail: o de atualizar, o `+` e o da animação do splash. */
+/** A round button at the bottom of the rail: the refresh one, the `+` and the splash animation's. */
 function Icone({
   label,
   title,
@@ -738,10 +746,10 @@ function Icone({
 }
 
 /**
- * O diálogo do `+`: um caminho, que vira um projeto — expandido pelo servidor (`~`), conferido como
- * pasta e subido como o `iniciar` sobe. Uma pasta que já é um projeto da lista é selecionada em vez de
- * ganhar um segundo host; um projeto novo aparece no rail, e a primeira execução dele — onboarding e a
- * decisão de confiança daquela pasta — acontece na janela dele, não aqui.
+ * The `+` dialog: a path, which becomes a project — expanded by the server (`~`), checked as a folder and
+ * brought up as `iniciar` brings one up. A folder that is already a project of the list is selected instead
+ * of gaining a second host; a new project appears on the rail, and its first run — onboarding and the trust
+ * decision for that folder — happens in its window, not here.
  */
 function NovoProjeto({
   open,
@@ -879,17 +887,18 @@ function NovoProjeto({
 }
 
 /**
- * A lista compacta do celular — a de antes do rail: uma seção que se abre, com o estado escrito, a
- * porta (link para a mesma aba) e a medida de cada projeto, o comando a copiar e o botão de subir e
- * parar. Sem hover para abrir painel num toque, os botões ficam visíveis em `pointer-coarse`.
+ * The phone's compact list — the one from before the rail: a section that opens, with the state written
+ * out, the port (link to the same tab) and the measurement of each project, the command to copy and the
+ * button to bring up and stop. With no hover to open a panel on a touch, the buttons stay visible in
+ * `pointer-coarse`.
  */
 function Secao() {
-  // A lista do celular mostra as medidas de todo mundo, como antes: é a leitura completa.
+  // The phone's list shows everyone's measurements, as before: it is the full reading.
   const { data, error, loading, refetch } = useAction(SecaoAction, {})
   const [aberta, setAberta] = useState(true)
-  // Um botão que muda a máquina mede de novo a seção inteira: o que mudou aparece sem poll.
+  // A button that changes the machine measures the whole section again: what changed appears with no poll.
   const atualizar = () => refetch().then(() => {})
-  // Enquanto só se sabe de um projeto não há entre o que saltar, e a seção seria enfeite.
+  // While only one project is known there is nothing to jump between, and the section would be decoration.
   if (!error && (!data || data.projetos.length < 2)) return null
   return (
     <Collapsible
@@ -944,9 +953,9 @@ function Secao() {
 }
 
 /**
- * Uma linha da lista do celular: o ponto e o nome, o estado escrito ao lado, e embaixo a porta (link
- * para a mesma aba) com a medida, ou o comando a copiar quando o host está parado. O botão da ponta
- * sobe o projeto parado e deita o que está de pé.
+ * A row of the phone's list: the dot and the name, the state written out beside it, and below the port
+ * (link to the same tab) with the measurement, or the command to copy when the host is stopped. The button
+ * at the end brings the stopped project up and brings down the one that is up.
  */
 function Linha({ projeto, onChanged }: { projeto: Projeto; onChanged: () => Promise<unknown> }) {
   const { copied, copy } = useCopy()
@@ -954,7 +963,8 @@ function Linha({ projeto, onChanged }: { projeto: Projeto; onChanged: () => Prom
   const [confirmar, setConfirmar] = useState<{ pid: number; url?: string }>()
   const [erro, setErro] = useState<string>()
   const depe = projeto.running !== undefined
-  // O que se disse de um estado não vale para o outro: uma medida nova apaga o aviso e a pergunta.
+  // What was said of one state does not hold for the other: a new measurement erases the warning and the
+  // question.
   useEffect(() => {
     setErro(undefined)
     setConfirmar(undefined)
@@ -1129,7 +1139,8 @@ function Linha({ projeto, onChanged }: { projeto: Projeto; onChanged: () => Prom
   )
 }
 
-/** A medida da linha do celular: `1 working · 1 question`, ou `unavailable` — nunca um zero inventado. */
+/** The measurement of the phone's row: `1 working · 1 question`, or `unavailable` — never an invented
+ * zero. */
 function LinhaMedida({ projeto }: { projeto: Projeto }) {
   if (!temMedida(projeto.working, projeto.perguntasAbertas))
     return (
@@ -1154,7 +1165,7 @@ function LinhaMedida({ projeto }: { projeto: Projeto }) {
   )
 }
 
-/** O botão de subir e deitar um host, na ponta da linha do celular. */
+/** The button that brings a host up and down, at the end of the phone's row. */
 function Botao({
   label,
   title,
