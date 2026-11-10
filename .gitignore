@@ -1,0 +1,6 @@
+# O node_modules de cada extensão é um symlink para o clone do Ultimate (install.sh o cria):
+# é de máquina, com caminho absoluto, e não entra no repositório.
+node_modules
+
+*.log
+.DS_Store
