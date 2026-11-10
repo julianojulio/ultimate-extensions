@@ -5,12 +5,7 @@
     }
   },
   "lander": {
-    "checks": [
-      [
-        { "command": "node --test projetos/projetos.test.ts", "timeout": 120 },
-        { "command": "node --test rate-limiter/limiter.test.ts", "timeout": 120 }
-      ]
-    ],
+    "checks": ["node --test $(find . -name '*.test.ts' -not -path '*/node_modules/*')"],
     "push": "origin"
   }
 }
