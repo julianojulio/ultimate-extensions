@@ -1,7 +1,8 @@
 /**
  * The "Projects" rail on the left edge of the window: a 48px column, present on every surface, with one
  * tile per project — the hosts that are up on top, a thin line, the stopped ones below (dimmer) and the
- * `+` at the bottom.
+ * ⟳, the `+` and the splash switch at the bottom. Each tile carries the app's presence dot in its corner
+ * and, when there are any, the number of unanswered questions.
  *
  * The whole block is the click target, and the port number does not appear on it: a project that is up
  * opens that project in this same tab (it is a switcher, not a peeker; ⌘/Ctrl+click opens a new tab, like
@@ -23,8 +24,9 @@
  * before, with the measurements and the buttons to bring up and stop — keeps being the project switcher,
  * and on the desktop it ceases to exist so that there are not two.
  *
- * No poll: the rail reads on opening, the actions re-read on finishing, and the refresh button is the other
- * reading.
+ * No poll: the rail reads on opening, makes a wave of full reads on entering with the pointer (at most
+ * once every 15 s), and again on the refresh button and after each action — and the tile's `title` says
+ * when the dot and the count are from.
  */
 import {
   CheckIcon,

@@ -96,7 +96,7 @@ test('the port of the link comes from the URL the host publishes', () => {
   // place.
   assert.equal(portaDo('http://127.0.0.1'), undefined)
   assert.equal(portaDo(undefined), undefined)
-  assert.equal(portaDo('não é uma url'), undefined)
+  assert.equal(portaDo('not a url'), undefined)
 })
 
 test('the count is a measured number, and what was not measured does not become zero', () => {
@@ -457,7 +457,7 @@ test('turning the splash off puts splash in disable once, and turning it on take
   const cheio = {
     modelFamilies: { default: 'fast' },
     lander: { checks: [['node --test', { timeout: 120 }]] },
-    extensions: { enable: ['parallel'], disable: ['rate-limiter'], orphans: 'não é meu' },
+    extensions: { enable: ['parallel'], disable: ['rate-limiter'], orphans: 'not mine' },
   }
   assert.deepEqual(ajustarSplash(cheio, false), {
     ...cheio,

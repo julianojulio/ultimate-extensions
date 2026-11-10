@@ -8,10 +8,12 @@
  * in the repository, and the hot reload follows the link.
  *
  * `listar` shows this machine's projects (`host.projects()`: the central homes of
- * `~/.ultimate/projects`, with the URL of those that are up). The rail calls `listar({ medir: false })`:
- * no trip to another host, because a tile shows no number. The measurements (`1 working · 1 question`)
- * exist only in a tile's panel, and they are the `medir` action's, which asks **that** host when the
- * panel opens. Neither the `busy` nor another project's questions are anywhere on disk — the
+ * `~/.ultimate/projects`, with the URL of those that are up). The rail opens with
+ * `listar({ medir: false })` — no trip to another host, the cheap read that draws the tiles — and then
+ * makes a wave of full `listar()` reads for the presence dot and the question count: on opening, on
+ * entering the rail with the pointer (at most once every 15 s), on the refresh button and after each
+ * action. The panel's `medir` asks **that** host when the panel opens. Neither the `busy` nor another
+ * project's questions are anywhere on disk — the
  * conversation list each host publishes keeps neither the task graph nor the question box —, so the
  * question goes by HTTP to that project's own host, on loopback, and it answers about itself
  * (`estado`). Loopback with the target's `Origin` is the same path `lib/remote.ts` uses to talk to
