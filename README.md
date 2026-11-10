@@ -60,9 +60,38 @@ provider outside the map (`Infinity`), it does not read any project's `settings.
 cannot raise the others' ceiling), and it does not count tokens or cost. Details in
 [`rate-limiter/README.md`](rate-limiter/README.md).
 
+## Install with an agent
+
+Paste this into any agent (Claude Code, Codex, @ultimate) and it installs the extensions this machine actually
+justifies, instead of all of them:
+
+```text
+Install the machine extensions from https://github.com/julianojulio/ultimate-extensions on this machine.
+Read skills/install-extensions/SKILL.md in that repository first: it is the source of truth, so follow it and
+don't invent steps.
+
+The repository is private for now: if ~/src/ultimate-extensions is not there, clone it there (ask me if I want
+it somewhere else) before starting.
+
+Then measure my machine the way the skill says — how many project homes ~/.ultimate/projects holds, and whether
+~/.ultimate/health.json or the recent model calls show 429s — tell me what the numbers justify, and ask me with
+one card: one option per extension, each with its screenshot, what it does and what it writes to disk.
+Install only what I pick; for the rate limiter, ask which providers to cap and with what ceiling. Prove it live
+(ultimate.extensions(), and the projetos and rate-limiter actions) without restarting Ultimate, then tell me what
+was written and how to undo it.
+
+Stop and ask me whenever a step needs a password, a login or a decision.
+```
+
+They load hot — nothing restarts, no project's `.ultimate/` is touched, and only `~/.ultimate/` changes: a
+symlink per extension, and — only when you use one of their switches — the keys they own (`extensions.disable`
+for the splash, `rateLimiter.limits` for the ceilings, which stay unlimited until you name a provider). To undo,
+delete `~/.ultimate/extensions/<name>`.
+
 ## Install
 
 ```sh
+git clone git@github.com:julianojulio/ultimate-extensions.git ~/src/ultimate-extensions  # private for now
 sh ~/src/ultimate-extensions/install.sh
 ```
 

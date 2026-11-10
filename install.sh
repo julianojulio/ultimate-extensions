@@ -7,7 +7,9 @@
 # @earendil-works/* packages that each extension's tests need come from.
 set -eu
 
-repo=$(cd "$(dirname "$0")" && pwd)
+# The physical path, even when this is reached through a symlink (`~/src/ultimate-extensions` pointing
+# elsewhere): the links then always name the same folder, and a second run through another path says "ok".
+repo=$(cd -P "$(dirname "$0")" && pwd)
 dest="$HOME/.ultimate/extensions"
 ultimate=${ULTIMATE_ROOT:-$HOME/src/ultimate}
 modules="$ultimate/node_modules"
