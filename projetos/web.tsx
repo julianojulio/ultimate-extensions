@@ -1,14 +1,29 @@
 /**
- * A seção “Projetos” da barra da esquerda: os projetos desta máquina, o estado de cada host, quantas
- * conversas estão trabalhando e quantas perguntas esperam resposta em cada um — a resposta a «onde
- * está acontecendo algo».
+ * O rail “Projetos” na borda esquerda da janela: uma coluna de 48px, presente em todas as superfícies,
+ * com um tile por projeto — os hosts de pé em cima, uma linha fina, os parados embaixo (mais apagados)
+ * e o `+` no pé.
  *
- * Ela lê uma vez ao abrir e de novo no botão de atualizar: não há poll. Um projeto de pé abre nesta
- * mesma aba pelo link da porta (é um trocador de projeto, não um espiador; ⌘/Ctrl+clique continua
- * abrindo em aba nova, como qualquer link). Um projeto parado sobe pelo botão da linha; um de pé
- * desce pelo mesmo lugar, e um host que esta extensão não subiu pede confirmação com todas as letras.
+ * O bloco inteiro é o alvo do clique, e o número da porta não aparece nele: um projeto de pé abre
+ * naquele projeto nesta mesma aba (é um trocador, não um espiador; ⌘/Ctrl+clique abre em aba nova, como
+ * qualquer link), um projeto parado sobe, e o projeto desta janela não tem ação nenhuma — só o
+ * `text-brand`. A porta continua ali, mas como **endereço** do link: `:porta` só se lê no painel do
+ * tile, junto com o estado escrito e as medidas.
  *
- * Com menos de dois projetos não há entre o que saltar: a seção não aparece.
+ * O painel abre no hover e no foco, e é ele que diz o que o tile não cabe: `running` / `stopped`, a
+ * porta, o caminho, e `1 working · 1 question` **medido quando o painel abre**, com a hora. Parar e
+ * copiar o comando moram nele — fora do link, porque um `<button>` dentro de um `<a>` é HTML inválido.
+ * Um projeto parado não mostra medida; um host que não responde mostra `unavailable` com o motivo,
+ * nunca `0`.
+ *
+ * O `+` abre o diálogo de um projeto novo: um caminho (`~/src/novo`), validado e subido como o `iniciar`
+ * sobe — primeira porta livre, destacado, sem janela, saúde em 20 s. A partir daí o projeto é dele: a
+ * primeira execução, o onboarding e a decisão de confiança daquela pasta acontecem na janela dele.
+ *
+ * No celular não há rail (não há largura para um): a lista compacta da sidebar — a de antes, com as
+ * medidas e os botões de subir e parar — continua sendo o trocador de projeto, e no desktop ela deixa
+ * de existir para não haver dois.
+ *
+ * Sem poll: o rail lê ao abrir, as ações releem ao terminar, e o botão de atualizar é a outra leitura.
  */
 import {
   CheckIcon,
@@ -16,42 +31,676 @@ import {
   CopyIcon,
   LoaderCircleIcon,
   PlayIcon,
+  PlusIcon,
   RotateCwIcon,
   SquareIcon,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
-import type { ReactNode } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import type { CSSProperties, FormEvent, ReactNode } from 'react'
+import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import {
   actionRef,
   api,
   cn,
   defineWebExtension,
+  errorMessage,
   formatTime,
   useAction,
   useCopy,
+  useViewport,
 } from '@/sdk'
-import { contagem, medido, palavra, perguntas, portaDo, tituloDasPerguntas } from './projetos.ts'
-import type { Projeto, ResultadoDaParada, Secao } from './tipos.ts'
+import {
+  contagem,
+  grupos,
+  iniciais,
+  linkDo,
+  medido,
+  palavra,
+  perguntas,
+  portaDo,
+  tituloDasPerguntas,
+} from './projetos.ts'
+import type { Medida, Projeto, ResultadoDaCriacao, ResultadoDaParada, Secao } from './tipos.ts'
 
-/** Sem argumentos → os projetos da máquina, medidos agora. */
-const SecaoAction = actionRef<null, Secao>('projetos', 'listar')
+/** `{ medir?: false }` → os projetos da máquina. O rail pede a leitura barata: nenhum tile mostra número. */
+const SecaoAction = actionRef<{ medir?: boolean }, Secao>('projetos', 'listar')
+
+/** `{ name }` → o que se mediu naquele host agora, com a hora. O painel do tile pede quando abre. */
+const MedirAction = actionRef<{ name: string }, Medida>('projetos', 'medir')
 
 /** `{ name }` → sobe o host daquele projeto e só volta quando a porta responde. */
 const IniciarAction = actionRef<{ name: string }, Projeto>('projetos', 'iniciar')
 
 /** `{ name, confirm? }` → deita o host daquele projeto, ou diz que ele pede confirmação. */
-const PararAction = actionRef<{ name: string; confirm?: boolean }, ResultadoDaParada>('projetos', 'parar')
+const PararAction = actionRef<{ name: string; confirm?: boolean }, ResultadoDaParada>(
+  'projetos',
+  'parar',
+)
+
+/** `{ caminho }` → sobe o host de uma pasta (ou seleciona o projeto que já é aquela pasta). */
+const CriarAction = actionRef<{ caminho: string }, ResultadoDaCriacao>('projetos', 'criar')
 
 export default defineWebExtension({
   slots: {
-    // Acima da lista de conversas: o projeto em que se está vem antes do que se faz nele.
-    sidebar: { component: Projetos, order: -10 },
+    // A coluna na borda esquerda: existe em toda superfície, e no celular se cala.
+    'shell.rail': Rail,
+    // A lista de antes, que no celular continua sendo o trocador de projeto.
+    sidebar: { component: Lista, order: -10 },
   },
 })
 
-function Projetos() {
-  const { data, error, loading, refetch } = useAction(SecaoAction)
+/** O rail — menos no celular, onde não há largura para ele e a lista da sidebar é o trocador. */
+function Rail() {
+  const viewport = useViewport()
+  if (viewport === 'phone') return null
+  return <Coluna />
+}
+
+/** A lista compacta — só no celular: no desktop e no tablet quem troca de projeto é o rail, um só. */
+function Lista() {
+  const viewport = useViewport()
+  if (viewport !== 'phone') return null
+  return <Secao />
+}
+
+/**
+ * A coluna: os rodando, a linha fina, os parados, e no pé o `+` e o botão de atualizar. O tile é uma
+ * peça só — o link (ou o botão de subir) e o painel dele —, então abrir o painel é abrir um `<div>` de
+ * 32px que já estava ali.
+ */
+function Coluna() {
+  const { data, error, loading, refetch } = useAction(SecaoAction, { medir: false })
+  const [novo, setNovo] = useState(false)
+  // Um clique que muda a máquina mede de novo a coluna: o que mudou aparece sem poll.
+  const atualizar = () => refetch().then(() => {})
+  const { rodando, parados } = grupos(data?.projetos ?? [])
+  return (
+    <nav
+      aria-label="Projects"
+      className="flex h-full w-12 shrink-0 flex-col items-center border-r border-sidebar-border bg-sidebar py-2"
+      data-projects-rail
+    >
+      <div className="flex w-full min-h-0 flex-1 flex-col items-center gap-1 overflow-y-auto">
+        {error ? (
+          <button
+            aria-label="The projects could not be read. Measure again"
+            className="flex size-8 items-center justify-center rounded-md border border-error/40 font-mono text-[11px] text-error outline-none hover:bg-error/10 focus-visible:ring-1 focus-visible:ring-ring"
+            onClick={() => void atualizar()}
+            title={error.message}
+            type="button"
+          >
+            !
+          </button>
+        ) : (
+          <>
+            {rodando.map((projeto) => (
+              <Tile key={projeto.name} onChanged={atualizar} projeto={projeto} />
+            ))}
+            {rodando.length > 0 && parados.length > 0 && (
+              <span aria-hidden="true" className="my-1.5 h-px w-6 shrink-0 bg-foreground/20" />
+            )}
+            {parados.map((projeto) => (
+              <Tile key={projeto.name} onChanged={atualizar} projeto={projeto} />
+            ))}
+          </>
+        )}
+      </div>
+      <div className="flex shrink-0 flex-col items-center gap-1 pt-1">
+        <Icone
+          className={cn('size-6', loading && 'pointer-events-none')}
+          label="Measure the projects again"
+          onClick={() => void atualizar()}
+          title={data ? `Measured at ${formatTime(data.at)} · measure again` : 'Measure again'}
+        >
+          <RotateCwIcon className={cn('size-3', loading && 'animate-spin')} />
+        </Icone>
+        <Icone
+          className="size-6"
+          label="New project"
+          onClick={() => setNovo(true)}
+          title="New project"
+        >
+          <PlusIcon className="size-3.5" />
+        </Icone>
+      </div>
+      <NovoProjeto onChanged={atualizar} onOpenChange={setNovo} open={novo} />
+    </nav>
+  )
+}
+
+/**
+ * Um projeto no rail: 32px de iniciais. De pé e fora desta janela é um link para o host; parado é um
+ * botão que o sobe; o desta janela é um botão que só abre o painel. O painel abre no hover e no foco e
+ * é `fixed`: assim ele não é recortado quando a coluna rola, e continua filho do tile na ordem do DOM,
+ * que é o que deixa o teclado chegar aos botões dele.
+ */
+function Tile({ projeto, onChanged }: { projeto: Projeto; onChanged: () => Promise<unknown> }) {
+  const { copied, copy } = useCopy()
+  const [aberto, setAberto] = useState(false)
+  const [ancora, setAncora] = useState<CSSProperties>()
+  const [pendente, setPendente] = useState<'start' | 'stop'>()
+  const [confirmar, setConfirmar] = useState<{ pid: number; url?: string }>()
+  const [erro, setErro] = useState<string>()
+  const [medida, setMedida] = useState<Medida>()
+  const [medindo, setMedindo] = useState(false)
+  const quadro = useRef<HTMLDivElement>(null)
+  // Fechar espera um instante: o ponteiro que atravessa o vão até o painel não o fecha no caminho.
+  const saida = useRef<ReturnType<typeof setTimeout>>(undefined)
+  useEffect(() => () => clearTimeout(saida.current), [])
+  const depe = projeto.running !== undefined
+  const porta = portaDo(projeto.running?.url)
+  const link = linkDo(projeto)
+  const estado =
+    pendente === 'start' ? 'starting' : pendente === 'stop' ? 'stopping' : palavra(projeto)
+
+  // O que se disse de um estado não vale para o outro: uma medida nova apaga o aviso e a pergunta.
+  useEffect(() => {
+    setErro(undefined)
+    setConfirmar(undefined)
+    setMedida(undefined)
+  }, [depe])
+
+  // A medida é do instante em que o painel abre — e o painel diz a hora dela. Fechado, não se mede nada.
+  useEffect(() => {
+    if (!aberto || !depe) return undefined
+    let vivo = true
+    setMedida(undefined)
+    setMedindo(true)
+    api
+      .action(MedirAction, { name: projeto.name })
+      .then((resultado) => {
+        if (vivo) setMedida(resultado)
+      })
+      .catch((causa: unknown) => {
+        // O painel não inventa um número: o que falhou vira `unavailable` com o motivo.
+        if (vivo)
+          setMedida({
+            working: null,
+            perguntasAbertas: null,
+            motivo: errorMessage(causa),
+            at: new Date().toISOString(),
+          })
+      })
+      .finally(() => {
+        if (vivo) setMedindo(false)
+      })
+    return () => {
+      vivo = false
+    }
+  }, [aberto, depe, projeto.name])
+
+  /** Abre o painel ao lado do tile: à direita, e para cima quando o tile está na metade de baixo. */
+  const abrir = () => {
+    const caixa = quadro.current?.getBoundingClientRect()
+    if (caixa)
+      setAncora({
+        left: caixa.right + 8,
+        ...(caixa.top > window.innerHeight / 2
+          ? { bottom: window.innerHeight - caixa.bottom }
+          : { top: caixa.top }),
+      })
+    setAberto(true)
+  }
+
+  /** O ponteiro ou o foco entrou: o painel abre (se já estava aberto, o fechamento pendente é cancelado). */
+  const entrar = () => {
+    clearTimeout(saida.current)
+    if (!aberto) abrir()
+  }
+
+  /** Saiu do tile e do painel: fecha em 150 ms, para atravessar o vão não contar como saída. */
+  const sair = () => {
+    clearTimeout(saida.current)
+    saida.current = setTimeout(fechar, 150)
+  }
+
+  const fechar = () => {
+    clearTimeout(saida.current)
+    setAberto(false)
+    setConfirmar(undefined)
+  }
+
+  const iniciar = async (evento: { preventDefault: () => void }) => {
+    evento.preventDefault()
+    fechar()
+    setPendente('start')
+    try {
+      await api.action(IniciarAction, { name: projeto.name })
+      await onChanged()
+    } catch (causa) {
+      setErro(errorMessage(causa))
+      setPendente(undefined)
+    } finally {
+      setPendente(undefined)
+    }
+  }
+
+  const parar = async (confirm = false) => {
+    setErro(undefined)
+    setPendente('stop')
+    try {
+      const resultado = await api.action(PararAction, {
+        name: projeto.name,
+        ...(confirm ? { confirm: true } : {}),
+      })
+      if (resultado.parado) {
+        setConfirmar(undefined)
+        await onChanged()
+      } else
+        setConfirmar({
+          pid: resultado.pid,
+          ...(resultado.url ? { url: resultado.url } : {}),
+        })
+    } catch (causa) {
+      setErro(errorMessage(causa))
+    } finally {
+      setPendente(undefined)
+    }
+  }
+
+  const letras = iniciais(projeto.name)
+  const aparencia = cn(
+    'flex size-8 items-center justify-center rounded-md border font-mono text-[10.5px] font-medium uppercase tabular-nums outline-none transition-colors focus-visible:ring-1 focus-visible:ring-ring',
+    projeto.current
+      ? 'border-brand/40 bg-brand/10 text-brand'
+      : depe
+        ? 'border-transparent bg-accent/70 text-foreground/85 hover:bg-accent'
+        : 'border-transparent text-muted-foreground/60 hover:bg-accent/40 hover:text-muted-foreground',
+    // Uma ação que falhou deixa a marca no tile (o texto inteiro está no `title` e no painel): o
+    // clique que não deu certo não pode sumir em silêncio.
+    erro && 'ring-1 ring-error/60',
+  )
+  const rotulo = projeto.current
+    ? `${projeto.name} — this window`
+    : depe
+      ? `Open ${projeto.name}${porta ? ` on ${porta}` : ''} in this tab`
+      : `Start ${projeto.name}`
+  const dica = erro ?? (projeto.current ? `${projeto.root} — this window` : undefined)
+  const conteudo = pendente === 'start' ? <LoaderCircleIcon className="size-3.5 animate-spin" /> : letras
+
+  return (
+    <div
+      className="relative flex w-full shrink-0 justify-center"
+      data-project={projeto.name}
+      data-status={depe ? 'running' : 'stopped'}
+      onBlur={(evento) => {
+        if (!evento.currentTarget.contains(evento.relatedTarget)) sair()
+      }}
+      onFocus={entrar}
+      onKeyDown={(evento) => {
+        if (evento.key === 'Escape') fechar()
+      }}
+      onPointerEnter={entrar}
+      onPointerLeave={sair}
+      ref={quadro}
+    >
+      {projeto.current ? (
+        <button
+          aria-current="page"
+          aria-label={rotulo}
+          className={aparencia}
+          onClick={abrir}
+          title={dica ?? `${projeto.root} — this window`}
+          type="button"
+        >
+          {conteudo}
+        </button>
+      ) : depe && link ? (
+        <a
+          aria-label={rotulo}
+          className={aparencia}
+          href={link}
+          title={dica ?? `${projeto.name} — open ${link} in this tab`}
+        >
+          {conteudo}
+        </a>
+      ) : (
+        <button
+          aria-busy={pendente === 'start' || undefined}
+          aria-label={rotulo}
+          className={aparencia}
+          disabled={pendente === 'start'}
+          onClick={(evento) => void iniciar(evento)}
+          title={dica ?? `${projeto.name} — stopped, click to start it`}
+          type="button"
+        >
+          {conteudo}
+        </button>
+      )}
+      {aberto && ancora && (
+        <div
+          className="fixed z-50 w-60 rounded-md border bg-popover p-3 text-popover-foreground shadow-md before:absolute before:inset-y-0 before:-left-2 before:w-2 before:content-['']"
+          data-project-panel={projeto.name}
+          style={ancora}
+        >
+          <div className="flex flex-col gap-2 text-[11px]">
+            <div className="flex flex-col gap-0.5">
+              <span className="truncate text-[12.5px] text-foreground" title={projeto.name}>
+                {projeto.name}
+              </span>
+              <span className="truncate font-mono text-[10px] text-muted-foreground/70" title={projeto.root}>
+                {projeto.root}
+              </span>
+            </div>
+            <div className="flex items-baseline gap-1.5 font-mono text-[10.5px]">
+              <span className={depe ? 'text-success' : 'text-muted-foreground/70'}>{estado}</span>
+              {porta && (
+                <>
+                  <span aria-hidden="true" className="text-muted-foreground/40">
+                    ·
+                  </span>
+                  <span className="text-muted-foreground">{porta}</span>
+                </>
+              )}
+              {projeto.current && (
+                <>
+                  <span aria-hidden="true" className="text-muted-foreground/40">
+                    ·
+                  </span>
+                  <span className="text-brand">this window</span>
+                </>
+              )}
+              {!depe && (
+                <>
+                  <span aria-hidden="true" className="text-muted-foreground/40">
+                    ·
+                  </span>
+                  <span className="text-muted-foreground/70">click to start</span>
+                </>
+              )}
+            </div>
+            {depe && <PainelMedida medida={medida} medindo={medindo} />}
+            <div className="flex items-center gap-1">
+              <Button
+                className="h-6 gap-1 px-1.5 text-[11px] text-muted-foreground"
+                disabled={!projeto.comando}
+                onClick={() => projeto.comando && copy(projeto.comando)}
+                size="xs"
+                title={projeto.comando ? `${projeto.comando} — click to copy` : 'No path for this project'}
+                type="button"
+                variant="ghost"
+              >
+                {copied ? (
+                  <CheckIcon className="size-3 text-success" />
+                ) : (
+                  <CopyIcon className="size-3" />
+                )}
+                command
+              </Button>
+              {depe && !projeto.current && (
+                <Button
+                  className="h-6 gap-1 px-1.5 text-[11px] text-muted-foreground"
+                  disabled={pendente === 'stop'}
+                  onClick={() => void parar()}
+                  size="xs"
+                  title={`Stop the host${projeto.running ? ` (pid ${projeto.running.pid})` : ''}`}
+                  type="button"
+                  variant="ghost"
+                >
+                  {pendente === 'stop' ? (
+                    <LoaderCircleIcon className="size-3 animate-spin" />
+                  ) : (
+                    <SquareIcon className="size-2.5 fill-current" />
+                  )}
+                  stop
+                </Button>
+              )}
+            </div>
+            {confirmar && (
+              <div className="flex flex-col gap-1 rounded-md bg-muted/50 p-2">
+                <p className="leading-relaxed text-muted-foreground">
+                  Stop the host{porta ? ` on ${porta}` : ''} (pid {confirmar.pid})? It was not
+                  started from here.
+                </p>
+                <div className="flex items-center gap-2 font-mono text-[10px]">
+                  <button
+                    className="cursor-pointer text-error outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring"
+                    onClick={() => void parar(true)}
+                    type="button"
+                  >
+                    stop it
+                  </button>
+                  <button
+                    className="cursor-pointer text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+                    onClick={() => setConfirmar(undefined)}
+                    type="button"
+                  >
+                    keep it
+                  </button>
+                </div>
+              </div>
+            )}
+            {erro && (
+              <p className="line-clamp-3 leading-relaxed break-words text-error" title={erro}>
+                {erro}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * O que se mediu no host, no painel: `1 working · 1 question`, com a hora da medida. Um host que não
+ * respondeu mostra `unavailable` e o motivo — nunca um zero inventado, que é o que faria ignorar
+ * justamente o projeto travado.
+ */
+function PainelMedida({ medida, medindo }: { medida: Medida | undefined; medindo: boolean }) {
+  if (medindo || !medida)
+    return (
+      <p className="flex items-center gap-1.5 font-mono text-[10.5px] text-muted-foreground/70">
+        <LoaderCircleIcon className="size-2.5 animate-spin" />
+        measuring…
+      </p>
+    )
+  const semMedida = medida.working === null && medida.perguntasAbertas === null
+  return (
+    <div className="flex flex-col gap-0.5">
+      {semMedida ? (
+        <p className="font-mono text-[10.5px] text-muted-foreground/80">
+          unavailable
+          {medida.motivo && <span className="text-muted-foreground/60"> — {medida.motivo}</span>}
+        </p>
+      ) : (
+        <p className="font-mono text-[10.5px] text-muted-foreground">
+          <span className="text-foreground/80">{contagem(medida.working)}</span>
+          <span aria-hidden="true"> · </span>
+          {perguntas(medida.perguntasAbertas)}
+        </p>
+      )}
+      <p
+        className="font-mono text-[10px] text-muted-foreground/60"
+        title={tituloDasPerguntas(medida.perguntasAbertas, medida.motivo)}
+      >
+        measured at {formatTime(medida.at)}
+      </p>
+    </div>
+  )
+}
+
+/** Um botão redondo do pé do rail: o de atualizar e o `+`. */
+function Icone({
+  label,
+  title,
+  onClick,
+  className,
+  children,
+}: {
+  label: string
+  title: string
+  onClick: () => void
+  className?: string
+  children: ReactNode
+}) {
+  return (
+    <button
+      aria-label={label}
+      className={cn(
+        'flex cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 outline-none hover:bg-accent/60 hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring',
+        className,
+      )}
+      onClick={onClick}
+      title={title}
+      type="button"
+    >
+      {children}
+    </button>
+  )
+}
+
+/**
+ * O diálogo do `+`: um caminho, que vira um projeto — expandido pelo servidor (`~`), conferido como
+ * pasta e subido como o `iniciar` sobe. Uma pasta que já é um projeto da lista é selecionada em vez de
+ * ganhar um segundo host; um projeto novo aparece no rail, e a primeira execução dele — onboarding e a
+ * decisão de confiança daquela pasta — acontece na janela dele, não aqui.
+ */
+function NovoProjeto({
+  open,
+  onOpenChange,
+  onChanged,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onChanged: () => Promise<unknown>
+}) {
+  const [caminho, setCaminho] = useState('')
+  const [enviando, setEnviando] = useState(false)
+  const [erro, setErro] = useState<string>()
+  const [feito, setFeito] = useState<ResultadoDaCriacao>()
+  const abrir = (proximo: boolean) => {
+    if (!proximo) {
+      setCaminho('')
+      setErro(undefined)
+      setFeito(undefined)
+      setEnviando(false)
+    }
+    onOpenChange(proximo)
+  }
+  const criar = async (evento: FormEvent) => {
+    evento.preventDefault()
+    if (!caminho.trim() || enviando) return
+    setEnviando(true)
+    setErro(undefined)
+    try {
+      const resultado = await api.action(CriarAction, { caminho })
+      setFeito(resultado)
+      await onChanged()
+    } catch (causa) {
+      setErro(errorMessage(causa))
+    } finally {
+      setEnviando(false)
+    }
+  }
+  const url = feito?.projeto.running?.url
+  return (
+    <Dialog onOpenChange={abrir} open={open}>
+      <DialogContent className="gap-0 p-0 sm:max-w-md" data-new-project showCloseButton={false}>
+        <DialogTitle className="sr-only">New project</DialogTitle>
+        <DialogDescription className="sr-only">
+          Start a project from a folder on this machine.
+        </DialogDescription>
+        {feito ? (
+          <div className="flex flex-col gap-3 px-5 py-4">
+            <div className="flex flex-col gap-1">
+              <span className="text-[13px] text-foreground">
+                {feito.projeto.name}{' '}
+                {feito.projeto.current ? 'is this window' : 'is running'}{' '}
+                <span className="font-mono text-[11px] text-muted-foreground">
+                  {portaDo(feito.projeto.running?.url) ?? ''}
+                </span>
+              </span>
+              <p className="text-[12px] leading-relaxed text-muted-foreground">
+                {feito.criado
+                  ? 'Its first run — onboarding and the trust decision for that folder — happens in its own window. The tile is in the rail.'
+                  : 'No second host was started for that folder.'}
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              {url && !feito.projeto.current && (
+                <Button
+                  className="h-7 text-[12px]"
+                  onClick={() => window.location.assign(url)}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  Open it
+                </Button>
+              )}
+              <Button
+                className="h-7 text-[12px]"
+                onClick={() => abrir(false)}
+                size="sm"
+                type="button"
+              >
+                Done
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <form className="flex flex-col gap-3 px-5 py-4" onSubmit={(e) => void criar(e)}>
+            <div className="flex flex-col gap-1">
+              <DialogTitle className="text-[13px]">New project</DialogTitle>
+              <DialogDescription className="text-[12px] leading-relaxed text-muted-foreground">
+                A folder on this machine. ultimate starts in it on the first free port, with no
+                window; its tile appears in the rail.
+              </DialogDescription>
+            </div>
+            <label className="flex flex-col gap-1">
+              <span className="font-mono text-[10px] tracking-wide text-muted-foreground/70 uppercase">
+                folder
+              </span>
+              <input
+                aria-label="Folder"
+                className="h-7 w-full min-w-0 rounded-md border border-input bg-background px-2 font-mono text-[12px] outline-none placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-60"
+                disabled={enviando}
+                onChange={(event) => setCaminho(event.target.value)}
+                placeholder="~/src/my-project"
+                spellCheck={false}
+                value={caminho}
+              />
+            </label>
+            {erro && <p className="font-mono text-[11px] leading-relaxed break-words text-error">{erro}</p>}
+            <div className="flex items-center justify-end gap-2">
+              <Button
+                className="h-7 text-[12px]"
+                disabled={enviando}
+                onClick={() => abrir(false)}
+                size="sm"
+                type="button"
+                variant="ghost"
+              >
+                Cancel
+              </Button>
+              <Button
+                className="h-7 gap-1.5 text-[12px]"
+                disabled={!caminho.trim() || enviando}
+                size="sm"
+                type="submit"
+              >
+                {enviando && <LoaderCircleIcon className="size-3.5 animate-spin" />}
+                {enviando ? 'Starting…' : 'Start project'}
+              </Button>
+            </div>
+          </form>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/**
+ * A lista compacta do celular — a de antes do rail: uma seção que se abre, com o estado escrito, a
+ * porta (link para a mesma aba) e a medida de cada projeto, o comando a copiar e o botão de subir e
+ * parar. Sem hover para abrir painel num toque, os botões ficam visíveis em `pointer-coarse`.
+ */
+function Secao() {
+  // A lista do celular mostra as medidas de todo mundo, como antes: é a leitura completa.
+  const { data, error, loading, refetch } = useAction(SecaoAction, {})
   const [aberta, setAberta] = useState(true)
   // Um botão que muda a máquina mede de novo a seção inteira: o que mudou aparece sem poll.
   const atualizar = () => refetch().then(() => {})
@@ -110,9 +759,9 @@ function Projetos() {
 }
 
 /**
- * Uma linha de projeto: o ponto e o nome, o estado escrito ao lado, e embaixo a porta (link para a
- * mesma aba) com a medida, ou o comando a copiar quando o host está parado. O botão da ponta sobe o
- * projeto parado e deita o que está de pé.
+ * Uma linha da lista do celular: o ponto e o nome, o estado escrito ao lado, e embaixo a porta (link
+ * para a mesma aba) com a medida, ou o comando a copiar quando o host está parado. O botão da ponta
+ * sobe o projeto parado e deita o que está de pé.
  */
 function Linha({ projeto, onChanged }: { projeto: Projeto; onChanged: () => Promise<unknown> }) {
   const { copied, copy } = useCopy()
@@ -131,8 +780,7 @@ function Linha({ projeto, onChanged }: { projeto: Projeto; onChanged: () => Prom
   const estado =
     pendente === 'start' ? 'starting' : pendente === 'stop' ? 'stopping' : palavra(projeto)
 
-  const falhou = (causa: unknown) =>
-    setErro(causa instanceof Error ? causa.message : String(causa))
+  const falhou = (causa: unknown) => setErro(errorMessage(causa))
 
   const iniciar = async () => {
     setErro(undefined)
@@ -204,7 +852,7 @@ function Linha({ projeto, onChanged }: { projeto: Projeto; onChanged: () => Prom
             'inline-block size-1.5 shrink-0 rounded-full',
             depe ? 'bg-success' : 'bg-muted-foreground/40',
           )}
-          data-status={depe ? 'done' : 'idle'}
+          data-status={depe ? 'running' : 'stopped'}
         />
         <span
           className={cn(
@@ -235,7 +883,7 @@ function Linha({ projeto, onChanged }: { projeto: Projeto; onChanged: () => Prom
                 </a>
               ))}
             {porta && <span aria-hidden="true">·</span>}
-            <Medida projeto={projeto} />
+            <LinhaMedida projeto={projeto} />
           </>
         ) : copiavel ? (
           <button
@@ -255,7 +903,7 @@ function Linha({ projeto, onChanged }: { projeto: Projeto; onChanged: () => Prom
           <span>path unknown</span>
         )}
         {acao && (
-          <span className="ml-auto flex shrink-0 items-center opacity-0 transition-opacity pointer-coarse:opacity-100 group-hover/project:opacity-100 focus-within:opacity-100">
+          <span className="pointer-coarse:opacity-100 ml-auto flex shrink-0 items-center opacity-0 transition-opacity group-hover/project:opacity-100 focus-within:opacity-100">
             {acao}
           </span>
         )}
@@ -296,13 +944,9 @@ function Linha({ projeto, onChanged }: { projeto: Projeto; onChanged: () => Prom
   )
 }
 
-/**
- * O que se mediu no host: `1 working · 1 question`, ou `unavailable` quando ele está de pé e não
- * respondeu — nunca um zero inventado, que faria ignorar justamente o projeto travado. O número das
- * perguntas é o sinal; a frase inteira fica no `title`.
- */
-function Medida({ projeto }: { projeto: Projeto }) {
-  if (projeto.perguntasAbertas === null && projeto.working === null)
+/** A medida da linha do celular: `1 working · 1 question`, ou `unavailable` — nunca um zero inventado. */
+function LinhaMedida({ projeto }: { projeto: Projeto }) {
+  if (medido(projeto.perguntasAbertas) === undefined && medido(projeto.working) === undefined)
     return (
       <span className="min-w-0 truncate" title={projeto.motivo ?? 'no measurement'}>
         unavailable
@@ -325,7 +969,7 @@ function Medida({ projeto }: { projeto: Projeto }) {
   )
 }
 
-/** O botão de subir e deitar um host: pequeno, na ponta da linha, e visível ao passar por cima. */
+/** O botão de subir e deitar um host, na ponta da linha do celular. */
 function Botao({
   label,
   title,

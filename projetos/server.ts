@@ -435,7 +435,6 @@ async function subir(
     { cwd: root, env: ambiente(projeto.home), log: options.log },
   )
   const pid = child.pid
-  if (pid === undefined) throw new Error(`Could not start ${projeto.name}`)
   let saida: string | undefined
   child.once('error', (erro) => {
     saida = `could not run ${process.execPath}: ${erro.message}`
@@ -443,6 +442,8 @@ async function subir(
   child.once('exit', (code, sinal) => {
     saida ??= `the process exited (${sinal ?? `code ${code}`})`
   })
+  // Sem pid o processo nem chegou a nascer, e o caminho do projeto é o que costuma faltar.
+  if (pid === undefined) throw new Error(`Could not start ${projeto.name} in ${root}`)
   // Gravado logo depois do spawn: a janela entre um e outro é o único caso em que o host fica sem
   // registo — e o pior que isso custa é um clique de confirmação a mais (ver README).
   if (!options.pastaNova) await lembrar(projeto.home, pid, port)

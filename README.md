@@ -24,17 +24,21 @@ outros projetos) e não do produto de ninguém. O que **não** entra: UI ou regr
 
 ## As extensões
 
-### `projetos` — os projetos da máquina na barra da esquerda
+### `projetos` — o rail dos projetos da máquina
 
-**O que resolve:** com mais de um projeto aberto nesta máquina, responder «onde está acontecendo algo
-agora» sem trocar de janela nem abrir terminal: uma seção **Projects** no topo da barra da esquerda
-com o estado de cada host, a porta em que ele atende, quantas conversas dele estão trabalhando e
-quantas perguntas do painel esperam resposta — e um botão que sobe o projeto parado e deita o que
-está de pé.
+**O que resolve:** com mais de um projeto aberto nesta máquina, trocar de um para outro e responder «onde
+está acontecendo algo agora» sem janela nem terminal: um **rail** de 48px na borda esquerda da janela,
+presente em todas as superfícies, com um tile de iniciais por projeto — os hosts de pé em cima, os
+parados embaixo —, o bloco inteiro como alvo do clique e o número da porta fora da tela. Um projeto de
+pé abre naquele projeto nesta aba; um parado sobe; o painel do tile (hover ou foco) diz a porta, o estado
+escrito, quantas conversas daquele projeto estão trabalhando e quantas perguntas esperam resposta,
+medido na hora em que o painel abre, com a hora; e o `+` cria um projeto a partir de uma pasta. No
+celular não há rail: a gaveta da sidebar continua com a lista compacta, com as medidas.
 
-**O que não faz:** não agenda nada, não faz poll (a medida é a do clique), não mata processo que não
-subiu sem perguntar (e nunca por porta, nome ou grupo), não esconde nem move projeto, e não alcança
-outra máquina. Detalhe em [`projetos/README.md`](projetos/README.md).
+**O que não faz:** não mede nada sem o painel abrir (e nunca inventa um zero), não mostra a porta no
+tile, não agenda nada, não faz poll, não mata processo que não subiu sem perguntar (e nunca por porta,
+nome ou grupo), não esconde nem move projeto, não decide onboarding nem confiança por um projeto novo e
+não alcança outra máquina. Detalhe em [`projetos/README.md`](projetos/README.md).
 
 ### `rate-limiter` — teto de pedidos simultâneos por provedor
 
@@ -68,8 +72,9 @@ Uma pasta de verdade em `~/.ultimate/extensions/<nome>` **não** é substituída
 conversa:
 
 ```ts
-ultimate.action('projetos', 'listar', {})   // os projetos da máquina, com estado e medidas
-ultimate.action('rate-limiter', 'status', {}) // { wrapped, limits, active, queued }
+ultimate.action('projetos', 'listar', {})              // os projetos da máquina, com estado e medidas
+ultimate.action('projetos', 'listar', { medir: false }) // a leitura barata do rail, sem medida
+ultimate.action('rate-limiter', 'status', {})          // { wrapped, limits, active, queued }
 ```
 
 E `ultimate.extensions()` mostra as duas com `server.loadedAt` e sem `server.error`.
@@ -99,7 +104,7 @@ O código é **daqui**; `~/.ultimate/extensions/<nome>` é só o link que o Ulti
 `git pull` (ou de mover o clone), rode o `install.sh` de novo.
 
 ```sh
-cd ~/src/ultimate-extensions/projetos     && node --test projetos.test.ts   # 11 testes
+cd ~/src/ultimate-extensions/projetos     && node --test projetos.test.ts   # 16 testes
 cd ~/src/ultimate-extensions/rate-limiter && node --test limiter.test.ts    # 12 testes
 ```
 
@@ -113,13 +118,14 @@ barra — prova-se ao vivo, com o Ultimate aberto.
 ultimate-extensions/
 ├── install.sh          # liga cada extensão em ~/.ultimate/extensions/<nome>
 ├── LICENSE             # MIT
-├── projetos/           # seção Projects da barra da esquerda
+├── projetos/           # o rail de projetos na borda esquerda
 │   ├── README.md
-│   ├── server.ts        # ações: listar, estado, iniciar, parar
-│   ├── projetos.ts      # as contas puras (porta, contagem, decisão de parada)
+│   ├── server.ts        # ações: listar, medir, estado, iniciar, criar, parar
+│   ├── projetos.ts      # as contas puras (iniciais, grupos, caminho, porta, decisão de parada)
 │   ├── tipos.ts         # o que as ações devolvem
-│   ├── web.tsx          # a seção
-│   └── projetos.test.ts
+│   ├── web.tsx          # o rail, o painel do tile, o diálogo do + e a lista do celular
+│   ├── projetos.test.ts
+│   └── screenshots/     # rail, painel e diálogo de um projeto novo
 └── rate-limiter/       # teto de pedidos simultâneos por provedor
     ├── README.md
     ├── server.ts        # embrulha o stream do provedor; ação: status
