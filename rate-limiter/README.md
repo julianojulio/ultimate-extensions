@@ -1,34 +1,34 @@
-# rate-limiter — teto de chamadas simultâneas por provedor
+# rate-limiter — a ceiling on simultaneous requests per provider
 
-Segura a quantidade de pedidos **em voo ao mesmo tempo** num provedor: 3 em `cirthan-dev` e em
-`cirthan` (ou o que o `settings.json` desta máquina disser), o resto espera numa fila que anda por
-ordem de chegada. Nasceu do patch que vivia em
-`server/tool-arguments.ts` no clone do Ultimate (commit `38932639`, guardado na branch
-`local/limiter-2026-11-08`), agora fora do clone: aqui recarrega a quente e vale para todos os
-projetos desta máquina.
+It holds how many requests are **in flight at the same time** on a provider: 3 on `cirthan-dev` and on
+`cirthan` (or whatever this machine's `settings.json` says), and the rest wait in a queue that moves in
+arrival order. It was born from the patch that lived in `server/tool-arguments.ts` in the Ultimate clone
+(commit `38932639`, kept on the branch `local/limiter-2026-11-08`), now outside the clone: here it
+hot-loads and holds for every project on this machine.
 
-O motivo: o provedor devolve `error 429` quando recebe muitos pedidos de uma vez. No trace deste
-projeto são 19 falhas com 429, 12 delas em cinco minutos de 04/11 (contagem piso: o trace guarda 7
-dias).
+The reason: the provider returns `error 429` when it receives too many requests at once. In this
+project's trace there are 19 failures with 429, 12 of them in five minutes on 04/11 (a floor count: the
+trace keeps 7 days).
 
-## O que ele faz
+## What it does
 
-1. pede ao runtime o provedor inteiro (`host.modelRuntime.getProvider(id)`);
-2. guarda o `streamSimple` **do provedor** (o fluxo de antes de embrulhar);
-3. registra de volta o mesmo provedor com um `streamSimple` que espera uma vaga, roda o fluxo
-   original e devolve a vaga quando o stream acaba — inclusive quando ele falha ou é abortado.
+1. asks the runtime for the whole provider (`host.modelRuntime.getProvider(id)`);
+2. keeps the **provider's** `streamSimple` (the flow from before wrapping);
+3. registers the same provider back with a `streamSimple` that waits for a slot, runs the original flow
+   and gives the slot back when the stream ends — including when it fails or is aborted.
 
-Se o provedor não existir nesta máquina, nada acontece com ele (`cirthan` existe na `auth.json`
-daqui mas não em `models.json`, então fica de fora e o `status` mostra isso). Se existir e não
-tiver `streamSimple`, **não registra nada** e avisa numa notificação: um provedor quebrado quebraria
-toda conversa da máquina.
+If the provider does not exist on this machine, nothing happens to it (`cirthan` exists in the
+`auth.json` here but not in `models.json`, so it stays out and the `status` shows that). If it exists and
+has no `streamSimple`, **it registers nothing** and warns in a notification: a broken provider would
+break every conversation on the machine.
 
-Provedor fora do teto (`Infinity`) recebe uma vaga que não conta nada e nunca entra na fila.
+A provider outside the ceiling (`Infinity`) gets a slot that counts for nothing and never enters the
+queue.
 
-## O teto
+## The ceiling
 
-O teto vem de duas camadas: o padrão no código (`limiter.ts`) e este arquivo, o **da máquina**,
-`~/.ultimate/settings.json`:
+The ceiling comes from two layers: the default in the code (`limiter.ts`) and this file, the
+**machine's**, `~/.ultimate/settings.json`:
 
 ```json
 {
@@ -36,14 +36,14 @@ O teto vem de duas camadas: o padrão no código (`limiter.ts`) e este arquivo, 
 }
 ```
 
-O que o arquivo diz vale **por cima** do padrão, e vale na hora: salvar o arquivo reinstala a
-extensão (`reloadOnSettings`, sem reiniciar o Ultimate). O semáforo continua sendo o mesmo — as
-vagas em voo e a fila não se perdem na recarga, e quem já espera mantém a ordem.
+What the file says rules **over** the default, and it holds at once: saving the file reinstalls the
+extension (`reloadOnSettings`, without restarting Ultimate). The semaphore stays the same one — the
+slots in flight and the queue are not lost in the reload, and whoever already waits keeps the order.
 
-**O teto é por provedor e por máquina**: três `cirthan-dev` em qualquer combinação de conversas,
-subagentes e automações desta máquina, e o quarto pedido espera.
+**The ceiling is per provider and per machine**: three `cirthan-dev` in any combination of
+conversations, subagents and automations on this machine, and the fourth request waits.
 
-O padrão do código, que vale quando o arquivo não diz nada:
+The default in the code, which holds when the file says nothing:
 
 ```ts
 export const LIMITS: Limits = {
@@ -52,50 +52,54 @@ export const LIMITS: Limits = {
 }
 ```
 
-As quatro regras:
+The four rules:
 
-- **Só o arquivo do usuário conta.** O `.ultimate/settings.json` do projeto é ignorado de propósito:
-  o teto é da conta no provedor, desta máquina, e um projeto não pode subir o teto dos outros.
-- **Provedor fora do mapa não é limitado** (`Infinity`): recebe a vaga na hora e nunca entra na
-  fila. É o que vale também sem a chave, sem o bloco `rateLimiter` e sem o arquivo.
-- **Valor inválido é recusado com uma notificação**, e vale o **padrão** do código (não o valor
-  anterior): tem de ser inteiro e ≥ 1. `0`, negativo, `1.5` e `"3"` não passam:
+- **Only the machine's file counts.** The project's `.ultimate/settings.json` is deliberately ignored:
+  the ceiling belongs to the account at the provider, on this machine, and one project cannot raise the
+  ceiling of the others.
+- **A provider outside the map is not limited** (`Infinity`): it gets the slot at once and never enters
+  the queue. That is what holds also with no key, no `rateLimiter` block and no file.
+- **An invalid value is refused with a notification**, and the code's **default** holds (not the
+  previous value): it has to be a whole number of at least 1. `0`, negative, `1.5` and `"3"` do not
+  pass:
 
   ```text
   rate-limiter: rateLimiter.limits.cirthan-dev must be a whole number of at least 1, not 0: it stays at 3
   ```
 
-  `0` não é um teto, é um apagão: travaria toda chamada desta máquina para sempre.
-- **Arquivo ilegível ou com JSON inválido**: os padrões valem, com uma notificação
-  (`rate-limiter: could not read ~/.ultimate/settings.json (…); keeping the defaults`). A extensão
-  não quebra, e um erro de digitação não deixa a máquina sem teto em silêncio.
+  `0` is not a ceiling, it is an outage: it would hold back every call on this machine for good.
+- **An unreadable file or invalid JSON**: the defaults hold, with a notification
+  (`rate-limiter: could not read ~/.ultimate/settings.json (…); keeping the defaults`). The extension
+  does not break, and a typo does not leave the machine without a ceiling in silence.
 
-Ao reler os tetos a extensão só troca `shared.limits`: o objeto de estado e o `ProviderLimiter` do
-recurso `rate-limiter.slots` são os mesmos, e por isso nada do que está em voo ou na fila se perde.
-Nenhum método é chamado na instância que o módulo anterior criou (o prototype dela é o antigo): o
-limiter lê os tetos pela closure `() => shared.limits`.
+When it re-reads the ceilings the extension only swaps `shared.limits`: the state object and the
+`ProviderLimiter` of the `rate-limiter.slots` resource are the same ones, and that is why nothing in
+flight or in the queue is lost. No method is called on the instance the previous module created (its
+prototype is the old one): the limiter reads the ceilings through the closure `() => shared.limits`.
 
-## As três armadilhas, e como cada uma está resolvida
+## The three traps, and how each one is solved
 
-- **Recarga dupla.** Uma recarga instala a facet nova antes de fechar a anterior, e o
-  `getProvider` nesse momento devolve **o embrulho da facet anterior**. Embrulhar de novo faria
-  cada pedido pegar duas vagas, e com teto 3 tudo travaria. O fluxo original e o semáforo moram num
-  `host.resource('rate-limiter.slots', …)`, que sobrevive à recarga: embrulha-se sempre **aquele**
-  fluxo, e o semáforo é o mesmo de antes. Prova em `limiter.test.ts` ("two loads over the same
-  host…"): duas cargas sobre o mesmo host, um pedido, `active === 1`; trocar o recurso pelo
-  `getProvider` atual faz o teste falhar com `active === 2`.
-- **Fechar não desregistra.** `unregisterProvider` apagaria a camada de extensão de um provedor que
-  existe sem ela. O `onClose` não toca no registro; desligar a extensão (tirar a pasta) só solta o
-  teto depois de reiniciar o processo, e nada mais quebra por isso.
-- **Vaga órfã.** A vaga é devolvida no `finally` do relay do stream, então um stream que termina com
-  erro, um aborto no meio e uma exceção do provedor passam todos por lá. Um pedido abortado **na
-  fila** sai da fila e rejeita sem nunca ter pego vaga; um aborto que chega junto com a entrega da
-  vaga é pulado na hora de entregar (`#slot`). Se o consumidor nunca ler o stream, o pedido já
-  começou (o embrulho é ansioso, como o patch original) e termina quando o provedor responder.
+- **Double load.** A reload installs the new facet before closing the previous one, and `getProvider` at
+  that moment returns **the previous facet's wrapper**. Wrapping again would make each request take two
+  slots, and with a ceiling of 3 everything would lock up. The original flow and the semaphore live in a
+  `host.resource('rate-limiter.slots', …)`, which survives the reload: **that** flow is the one always
+  wrapped, and the semaphore is the one from before. Proof in `limiter.test.ts` ("two loads over the
+  same host…"): two loads over the same host, one request, `active === 1`; swapping the resource for the
+  current `getProvider` makes the test fail with `active === 2`.
+- **Closing does not unregister.** `unregisterProvider` would wipe the extension's layer from a provider
+  that exists without it. `onClose` does not touch the registration; turning the extension off
+  (removing the folder) only releases the ceiling after restarting the process, and nothing else breaks
+  because of it.
+- **An orphan slot.** The slot comes back in the `finally` of the stream relay, so a stream that ends
+  with an error, an abort in the middle and an exception from the provider all pass through there. A
+  request aborted **in the queue** leaves the queue and rejects without ever having taken a slot; an
+  abort that arrives together with the slot's hand-over is skipped at hand-over time (`#slot`). If the
+  consumer never reads the stream, the request has already started (the wrapper is eager, like the
+  original patch) and ends when the provider answers.
 
 ## Status
 
-A ação `status`, sem argumentos:
+The `status` action, with no arguments:
 
 ```sh
 ultimate.action('rate-limiter', 'status')
@@ -103,47 +107,49 @@ ultimate.action('rate-limiter', 'status')
 #   active: { 'cirthan-dev': 0 }, queued: { 'cirthan-dev': 0 } }
 ```
 
-`wrapped` é o que está mesmo embrulhado; `active` e `queued` são as vagas em voo e na fila.
+`wrapped` is what is really wrapped; `active` and `queued` are the slots in flight and in the queue.
 
-## Testes
+## Tests
 
 ```sh
 cd ~/src/ultimate-extensions/rate-limiter
 node --test limiter.test.ts
 ```
 
-`node_modules` aqui é **symlink para `~/src/ultimate/node_modules`** (criado pelo `install.sh` do
-repositório: é o truque das outras extensões desta máquina, e os testes resolvem
-`@earendil-works/pi-ai` e `@earendil-works/pi-durable` do clone). Symlink de máquina, não entra em
-repositório nenhum; se o clone mudar de lugar, basta rodar o `install.sh` de novo.
+`node_modules` here is a **symlink to `~/src/ultimate/node_modules`** (created by the repository's
+`install.sh`: it is this machine's extensions trick, and the tests resolve `@earendil-works/pi-ai` and
+`@earendil-works/pi-durable` from the clone). A machine symlink, it enters no repository; if the clone
+moves, running `install.sh` again is enough.
 
-O teste do semáforo é puro (sem host): teto, fila FIFO, liberação idempotente, aborto na fila, teto
-infinito. Os da leitura dos tetos usam um `HOME` temporário: teto vindo do `settings.json`, chave
-ausente → padrão, JSON inválido → padrão **e** notificação, `0`/negativo/não-inteiro recusado com
-notificação, e o arquivo salvo de novo aplicando no **mesmo** semáforo com a fila na mesma ordem. Os
-dois últimos usam um host falso: as duas cargas (recarga sem embrulhar duas vezes) e o stream
-abortado na fila (termina com evento `error` de motivo `aborted` e não prende vaga).
+The semaphore's test is pure (no host): ceiling, FIFO queue, idempotent release, abort in the queue,
+infinite ceiling. The ones reading the ceilings use a temporary `HOME`: ceiling coming from the
+`settings.json`, missing key → default, invalid JSON → default **and** a notification,
+`0`/negative/non-whole refused with a notification, and the file saved again applying on the **same**
+semaphore with the queue in the same order. The last two use a fake host: the two loads (a reload
+without wrapping twice) and the stream aborted in the queue (it ends with an `error` event of reason
+`aborted` and holds no slot).
 
-## Pressupostos sobre a API do pi
+## Assumptions about the pi API
 
-- `host.modelRuntime.getProvider(id)` devolve o provedor **composto** — a camada da extensão por
-  cima da base —, e `registerProvider(id, config)` compõe por cima da base, não substitui.
-- `registerProvider` com `streamSimple` **exige** `api` (`"api" is required when registering
-  streamSimple`), e o runtime só usa a camada da extensão quando `model.api === config.api`; por
-  isso a `api` sai de `getProvider(id).getModels()[0].api` e é guardada junto com o fluxo.
-- O registro do provedor sobrevive à recarga e à troca de facet: só `unregisterProvider` o tira.
-- `streamSimple` recebe `(model, context, options)` já com a autenticação preparada pelo runtime
-  (`prepareRequest`), e devolve um `AssistantMessageEventStream` que pode ser iterado com
-  `for await`; `result()` dá a mensagem final.
-- `defineExtension({ name })` precisa do mesmo nome da pasta (`rate-limiter`), e a factory recebe o
-  `ExtensionHost`.
+- `host.modelRuntime.getProvider(id)` returns the **composed** provider — the extension's layer over
+  the base —, and `registerProvider(id, config)` composes over the base, it does not replace.
+- `registerProvider` with `streamSimple` **requires** `api` (`"api" is required when registering
+  streamSimple`), and the runtime only uses the extension's layer when `model.api === config.api`; that
+  is why `api` comes from `getProvider(id).getModels()[0].api` and is kept together with the flow.
+- The provider registration survives the reload and the facet swap: only `unregisterProvider` takes it
+  away.
+- `streamSimple` receives `(model, context, options)` already with authentication prepared by the
+  runtime (`prepareRequest`), and returns an `AssistantMessageEventStream` that can be iterated with
+  `for await`; `result()` gives the final message.
+- `defineExtension({ name })` needs the same name as the folder (`rate-limiter`), and the factory
+  receives the `ExtensionHost`.
 
-Se algum desses deixar de valer numa atualização do Ultimate, o sintoma é o `status` não listar o
-provedor em `wrapped` (e uma notificação dizendo por quê). Nesse caso a saída é tirar a pasta e
-**reiniciar o Ultimate**: o registro que a extensão deixou no runtime sobrevive à recarga, então
-só o processo novo volta a ter o provedor sem embrulho.
+If any of these stops holding in an Ultimate update, the symptom is `status` not listing the provider
+in `wrapped` (and a notification saying why). In that case the way out is to remove the folder and
+**restart Ultimate**: the registration the extension left in the runtime survives the reload, so only
+the new process gets the provider unwrapped again.
 
-O host precisa de `userHome` (a extensão lê `$HOME/.ultimate/settings.json`), e `install` é assíncrono
-por causa dessa leitura; `reloadOnSettings` faz o host reinstalar a extensão quando o arquivo muda.
-A facet antiga só é fechada depois que a nova carregou, então um `server.ts` com erro de sintaxe
-deixa a anterior no ar — e um valor de teto recusado nunca derruba a extensão.
+The host needs `userHome` (the extension reads `$HOME/.ultimate/settings.json`), and `install` is
+asynchronous because of that read; `reloadOnSettings` makes the host reinstall the extension when the
+file changes. The old facet is only closed after the new one has loaded, so a `server.ts` with a syntax
+error leaves the previous one up — and a refused ceiling value never takes the extension down.
