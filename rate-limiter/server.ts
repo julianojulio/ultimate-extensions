@@ -1,11 +1,11 @@
 /**
- * A ceiling on concurrent requests per provider, as an extension: `cirthan-dev` gets three at a
- * time, the rest wait in arrival order. It wraps the provider's own stream and nothing else, so a
- * facet that fails to install leaves the provider as it was.
+ * A ceiling on concurrent requests per provider, as an extension: a provider the settings name gets
+ * that many requests at a time, the rest wait in arrival order. It wraps the provider's own stream and
+ * nothing else, so a facet that fails to install leaves the provider as it was.
  *
- * The ceilings are the defaults in `limiter.ts`, over them the `rateLimiter.limits` of this
- * machine's `~/.ultimate/settings.json` (never a project's: a project must not raise the ceiling of
- * the other conversations on this machine). Saving that file reinstalls the extension, and the
+ * The ceilings are the `rateLimiter.limits` of this machine's `~/.ultimate/settings.json` (never a
+ * project's: a project must not raise the ceiling of the other conversations on this machine), over the
+ * code's `LIMITS` in `limiter.ts`, which ships empty — a provider nobody named is not limited. Saving that file reinstalls the extension, and the
  * semaphore is kept across the reinstall, so the queue and the slots in flight survive it.
  *
  * The wrapper and the semaphore live in a `host.resource`: on a reload the composed provider

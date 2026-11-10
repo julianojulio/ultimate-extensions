@@ -1,10 +1,12 @@
 # rate-limiter — a ceiling on simultaneous requests per provider
 
-It holds how many requests are **in flight at the same time** on a provider: 3 on `cirthan-dev` and on
-`cirthan` (or whatever this machine's `settings.json` says), and the rest wait in a queue that moves in
-arrival order. It was born from the patch that lived in `server/tool-arguments.ts` in the Ultimate clone
-(commit `38932639`, kept on the branch `local/limiter-2026-11-08`), now outside the clone: here it
-hot-loads and holds for every project on this machine.
+It holds how many requests are **in flight at the same time** on a provider — 3 on `anthropic`, say, or
+whatever this machine's `settings.json` says — and the rest wait in a queue that moves in arrival order.
+**Nothing is limited until you name a provider**: the code ships no ceiling, because a default here would
+throttle a stranger's subscription before they asked for it. It was born from the patch that lived in
+`server/tool-arguments.ts` in the Ultimate clone (commit `38932639`, kept on the branch
+`local/limiter-2026-11-08`), now outside the clone: here it hot-loads and holds for every project on this
+machine.
 
 The reason: the provider returns `error 429` when it receives too many requests at once. In this
 project's trace there are 19 failures with 429, 12 of them in five minutes on 04/11 (a floor count: the
@@ -17,8 +19,8 @@ trace keeps 7 days).
 3. registers the same provider back with a `streamSimple` that waits for a slot, runs the original flow
    and gives the slot back when the stream ends — including when it fails or is aborted.
 
-If the provider does not exist on this machine, nothing happens to it (`cirthan` exists in the
-`auth.json` here but not in `models.json`, so it stays out and the `status` shows that). If it exists and
+If the provider does not exist on this machine, nothing happens to it (one listed in the `auth.json`
+here but not in `models.json` stays out, and the `status` shows that). If it exists and
 has no `streamSimple`, **it registers nothing** and warns in a notification: a broken provider would
 break every conversation on the machine.
 
@@ -27,29 +29,27 @@ queue.
 
 ## The ceiling
 
-The ceiling comes from two layers: the default in the code (`limiter.ts`) and this file, the
-**machine's**, `~/.ultimate/settings.json`:
+The ceiling comes from this machine's `~/.ultimate/settings.json`. The code ships none (`LIMITS`, in
+`limiter.ts`, is empty), so a provider nobody named is not limited. A starting map, the providers most
+people have, is this one (three on Claude, three on GPT); it is a choice, not a default:
 
 ```json
 {
-  "rateLimiter": { "limits": { "cirthan-dev": 3, "cirthan": 3 } }
+  "rateLimiter": { "limits": { "anthropic": 3, "openai": 3 } }
 }
 ```
 
-What the file says rules **over** the default, and it holds at once: saving the file reinstalls the
-extension (`reloadOnSettings`, without restarting Ultimate). The semaphore stays the same one — the
-slots in flight and the queue are not lost in the reload, and whoever already waits keeps the order.
+What the file says holds at once: saving the file reinstalls the extension (`reloadOnSettings`, without
+restarting Ultimate). The semaphore stays the same one — the slots in flight and the queue are not lost in
+the reload, and whoever already waits keeps the order.
 
-**The ceiling is per provider and per machine**: three `cirthan-dev` in any combination of
-conversations, subagents and automations on this machine, and the fourth request waits.
+**The ceiling is per provider and per machine**: three `anthropic` in any combination of conversations,
+subagents and automations on this machine, and the fourth request waits.
 
-The default in the code, which holds when the file says nothing:
+The code's own map, which is what applies when the file names no provider:
 
 ```ts
-export const LIMITS: Limits = {
-  'cirthan-dev': 3,
-  cirthan: 3,
-}
+export const LIMITS: Limits = {}
 ```
 
 The four rules:
@@ -59,16 +59,15 @@ The four rules:
   ceiling of the others.
 - **A provider outside the map is not limited** (`Infinity`): it gets the slot at once and never enters
   the queue. That is what holds also with no key, no `rateLimiter` block and no file.
-- **An invalid value is refused with a notification**, and the code's **default** holds (not the
-  previous value): it has to be a whole number of at least 1. `0`, negative, `1.5` and `"3"` do not
-  pass:
+- **An invalid value is refused with a notification**, and the ceiling in force holds (not the new
+  value): it has to be a whole number of at least 1. `0`, negative, `1.5` and `"3"` do not pass:
 
   ```text
-  rate-limiter: rateLimiter.limits.cirthan-dev must be a whole number of at least 1, not 0: it stays at 3
+  rate-limiter: rateLimiter.limits.anthropic must be a whole number of at least 1, not 0: it stays unlimited
   ```
 
   `0` is not a ceiling, it is an outage: it would hold back every call on this machine for good.
-- **An unreadable file or invalid JSON**: the defaults hold, with a notification
+- **An unreadable file or invalid JSON**: the code's defaults hold (nothing, today), with a notification
   (`rate-limiter: could not read ~/.ultimate/settings.json (…); keeping the defaults`). The extension
   does not break, and a typo does not leave the machine without a ceiling in silence.
 
@@ -103,8 +102,8 @@ The `status` action, with no arguments:
 
 ```sh
 ultimate.action('rate-limiter', 'status')
-# { wrapped: ['cirthan-dev'], limits: { 'cirthan-dev': 3, cirthan: 3 },
-#   active: { 'cirthan-dev': 0 }, queued: { 'cirthan-dev': 0 } }
+# { wrapped: ['anthropic'], limits: { anthropic: 3 },
+#   active: { anthropic: 0 }, queued: { anthropic: 0 } }
 ```
 
 `wrapped` is what is really wrapped; `active` and `queued` are the slots in flight and in the queue.
@@ -123,7 +122,7 @@ moves, running `install.sh` again is enough.
 
 The semaphore's test is pure (no host): ceiling, FIFO queue, idempotent release, abort in the queue,
 infinite ceiling. The ones reading the ceilings use a temporary `HOME`: ceiling coming from the
-`settings.json`, missing key → default, invalid JSON → default **and** a notification,
+`settings.json`, missing key → not limited, invalid JSON → not limited **and** a notification,
 `0`/negative/non-whole refused with a notification, and the file saved again applying on the **same**
 semaphore with the queue in the same order. The last two use a fake host: the two loads (a reload
 without wrapping twice) and the stream aborted in the queue (it ends with an `error` event of reason

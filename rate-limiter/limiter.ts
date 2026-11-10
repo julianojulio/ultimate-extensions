@@ -1,17 +1,18 @@
 /**
  * The semaphore: at most `limit` requests in flight per provider, the rest waiting in arrival order.
  *
- * Pure Node (no host, no pi), so it is tested on its own. `LIMITS` holds the ceilings this machine
- * starts from, and `resolveLimits` lets the ones saved in `~/.ultimate/settings.json` rule over
- * them; a provider with no ceiling is not limited, and `Infinity` returns a slot without queueing.
+ * Pure Node (no host, no pi), so it is tested on its own. `LIMITS` ships **empty**: a provider nobody
+ * named is not limited, and `resolveLimits` reads the ceilings saved in `~/.ultimate/settings.json`.
+ * `Infinity` returns a slot without queueing.
  */
 export type Limits = Readonly<Record<string, number>>
 
-/** Ceiling per provider before the settings name any. Editing this file reinstalls the extension too. */
-export const LIMITS: Limits = {
-  'cirthan-dev': 3,
-  cirthan: 3,
-}
+/**
+ * The ceilings the code ships with: none. A default here would throttle a stranger's subscription
+ * before they asked for it, and this repository is public — the machine's settings name the providers
+ * that need a ceiling. Editing this file reinstalls the extension too.
+ */
+export const LIMITS: Limits = {}
 
 /** The ceilings in force, and what in the settings was refused. */
 export type Resolved = { limits: Limits; problems: string[] }
@@ -23,8 +24,8 @@ const unchanged = (ceiling: number | undefined) =>
   ceiling === undefined ? 'it stays unlimited' : `it stays at ${ceiling}`
 
 /**
- * The ceilings in force: `LIMITS`, with this machine's `rateLimiter.limits` over them. A provider
- * the settings name and the defaults do not is added; a provider named in neither is not limited.
+ * The ceilings in force: `LIMITS` (empty today), with this machine's `rateLimiter.limits` over them.
+ * A provider named in neither is not limited.
  *
  * A value that is not a whole number of at least one is refused, and only a problem comes back for
  * it: `0` would hold back every call on this machine for good, and that is an outage, not a ceiling.

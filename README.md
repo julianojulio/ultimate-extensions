@@ -18,7 +18,7 @@ change how the machine works — how many simultaneous requests each provider ac
 something is happening in each open project. They hot-load, alongside any project, and they also
 apply to automation conversations and to subagents.
 
-**What goes in** here: an extension about the machine (processes, provider caps, ports, other
+**What goes in** here: an extension about the machine (processes, provider ceilings, ports, other
 projects' homes), not about anyone's product. **What does not**: a project's UI or rule — that is
 `<project>/.ultimate/extensions/`.
 
@@ -46,17 +46,18 @@ does not hide or move a project, it does not decide onboarding or trust for a ne
 touches no extension besides the splash (and only in this machine's layer), and it does not reach
 another machine. Details in [`projetos/README.md`](projetos/README.md).
 
-### `rate-limiter` — simultaneous request cap per provider
+### `rate-limiter` — a ceiling on simultaneous requests per provider
 
 **What it solves:** the provider returns `error 429` when it receives too many requests at once. The
-extension holds how many requests are **in flight at the same time** per provider (3 on `cirthan-dev`
-and on `cirthan`, or whatever this machine's `~/.ultimate/settings.json` says) and puts the rest in a
-queue in arrival order. The cap is per provider and per machine: it holds for conversations,
-subagents and automations together, and it changes when the file is saved, with no restart.
+extension holds how many requests are **in flight at the same time** per provider (`anthropic`,
+`openai`, `opencode`, or whatever this machine's `~/.ultimate/settings.json` names — nothing is limited
+until a provider is named) and puts the rest in a queue in arrival order. The ceiling is per provider
+and per machine: it holds for conversations, subagents and automations together, and it changes when the
+file is saved, with no restart.
 
 **What it does not do:** it does not touch a provider that does not exist here, it does not limit a
 provider outside the map (`Infinity`), it does not read any project's `settings.json` (one project
-cannot raise the others' cap), and it does not count tokens or cost. Details in
+cannot raise the others' ceiling), and it does not count tokens or cost. Details in
 [`rate-limiter/README.md`](rate-limiter/README.md).
 
 ## Install
@@ -135,10 +136,10 @@ ultimate-extensions/
 │   ├── web.tsx          # the rail, the tile panel, the + dialog, the phone list and the bottom
 │   ├── projetos.test.ts
 │   └── screenshots/     # rail, state, bottom, panel and a new project's dialog
-└── rate-limiter/       # simultaneous request cap per provider
+└── rate-limiter/       # a ceiling on simultaneous requests per provider
     ├── README.md
     ├── server.ts        # wraps the provider stream; action: status
-    ├── limiter.ts       # the semaphore and the reading of the caps
+    ├── limiter.ts       # the semaphore and the reading of the ceilings
     └── limiter.test.ts
 ```
 

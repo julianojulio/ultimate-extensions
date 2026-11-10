@@ -26,8 +26,8 @@ const tick = () => new Promise((resolve) => setImmediate(resolve))
 
 const model = {
   api: 'openai-completions',
-  provider: 'cirthan-dev',
-  id: 'deepseek-v4.1-flash',
+  provider: 'openai',
+  id: 'gpt-5',
 } as unknown as Model<Api>
 const context = {} as TranscriptContext
 
@@ -84,12 +84,12 @@ async function tempHome(contents?: string) {
   return home
 }
 
-/** The settings file that gives `cirthan-dev` a ceiling. */
+/** The settings file that gives the provider a ceiling. */
 const saved = (ceiling: number) =>
   JSON.stringify({ rateLimiter: { limits: { [model.provider]: ceiling } } })
 
 /**
- * A host with one provider, `cirthan-dev`, on a flow the test opens and closes. The resources are one
+ * A host with one provider, `openai`, on a flow the test opens and closes. The resources are one
  * map for the whole test, as in the host: two installs share one semaphore.
  */
 function fakeHost(userHome: string) {
@@ -216,18 +216,20 @@ test('a provider without a ceiling never queues', async () => {
   assert.equal(limiter.active('p'), 0)
 })
 
-test('the ceilings come from the machine’s settings, over the defaults', () => {
+test('the ceilings come from the machine’s settings, and from nowhere else', () => {
   const { limits, problems } = resolveLimits({
-    rateLimiter: { limits: { 'cirthan-dev': 2, other: 4 } },
+    rateLimiter: { limits: { anthropic: 2, other: 4 } },
   })
-  assert.deepEqual(limits, { 'cirthan-dev': 2, cirthan: 3, other: 4 })
+  assert.deepEqual(limits, { anthropic: 2, other: 4 })
   assert.deepEqual(problems, [])
 })
 
-test('with no key the defaults hold, and a provider named nowhere is not limited', () => {
+test('nothing is limited until the settings name a provider', () => {
+  // The code ships no ceiling: a provider nobody named is not throttled on someone else's machine.
+  assert.deepEqual(LIMITS, {})
   for (const settings of [undefined, {}, { rateLimiter: {} }, { rateLimiter: { limits: {} } }]) {
     const { limits, problems } = resolveLimits(settings)
-    assert.deepEqual(limits, LIMITS, `${JSON.stringify(settings)} keeps the defaults`)
+    assert.deepEqual(limits, LIMITS, `${JSON.stringify(settings)} limits nothing`)
     assert.deepEqual(problems, [])
   }
   assert.equal(new ProviderLimiter(resolveLimits({}).limits).limit('unlisted'), Infinity)
@@ -235,11 +237,15 @@ test('with no key the defaults hold, and a provider named nowhere is not limited
 
 test('a ceiling that is not a whole number of at least 1 is refused and reported', () => {
   const { limits, problems } = resolveLimits({
-    rateLimiter: { limits: { 'cirthan-dev': 0, cirthan: -2, other: 1.5, also: '3' } },
+    rateLimiter: { limits: { anthropic: 0, openai: -2, other: 1.5, also: '3' } },
   })
   assert.deepEqual(limits, LIMITS, 'a refused value changes no ceiling')
   assert.equal(problems.length, 4)
-  assert.match(problems[0]!, /cirthan-dev must be a whole number of at least 1, not 0: it stays at 3/)
+  assert.match(
+    problems[0]!,
+    /anthropic must be a whole number of at least 1, not 0: it stays unlimited/,
+  )
+  assert.match(problems[1]!, /openai must be a whole number of at least 1, not -2: it stays unlimited/)
   assert.match(problems[2]!, /other must be a whole number of at least 1, not 1\.5: it stays unlimited/)
 })
 
@@ -303,7 +309,8 @@ test('a saved ceiling applies on the same semaphore, and the queue keeps its ord
 })
 
 test('two loads over the same host leave one level of wrapper', async () => {
-  const home = await tempHome()
+  // A provider has to be named in the settings to be wrapped at all: the code ships no ceiling.
+  const home = await tempHome(saved(1))
   const { host, notices, provided, runtime } = fakeHost(home)
 
   const state = await install(host)
@@ -313,7 +320,7 @@ test('two loads over the same host leave one level of wrapper', async () => {
 
   assert.notEqual(secondLoad, firstLoad, 'the reload installs its own wrapper')
   assert.equal(
-    state.originals.get('cirthan-dev')!.stream,
+    state.originals.get(model.provider)!.stream,
     provided.stream,
     'the flow kept is the provider’s own, not the previous wrapper',
   )
@@ -322,39 +329,39 @@ test('two loads over the same host leave one level of wrapper', async () => {
   const out = secondLoad(model, context)
   const done = consume(out)
   await tick()
-  assert.equal(state.limiter.active('cirthan-dev'), 1, 'one slot per request, not one per wrapper level')
+  assert.equal(state.limiter.active(model.provider), 1, 'one slot per request, not one per wrapper level')
 
   provided.open()
   await done
   assert.equal(provided.calls.count, 1, 'the provider was called once')
-  assert.equal(state.limiter.active('cirthan-dev'), 0)
+  assert.equal(state.limiter.active(model.provider), 0)
   await rm(home, { recursive: true, force: true })
 })
 
 test('a stream aborted while queued ends with an aborted error and frees nothing', async () => {
-  const limiter = new ProviderLimiter({ 'cirthan-dev': 1 })
+  const limiter = new ProviderLimiter({ [model.provider]: 1 })
   const provided = gate()
-  const running = limited(provided.stream, limiter, 'cirthan-dev')
+  const running = limited(provided.stream, limiter, model.provider)
   const runningDone = consume(running(model, context))
   await tick()
-  assert.equal(limiter.active('cirthan-dev'), 1)
+  assert.equal(limiter.active(model.provider), 1)
 
   const controller = new AbortController()
-  const queued = limited(provided.stream, limiter, 'cirthan-dev')(model, context, {
+  const queued = limited(provided.stream, limiter, model.provider)(model, context, {
     signal: controller.signal,
   })
   const queuedEvents = consume(queued)
   await tick()
-  assert.equal(limiter.queued('cirthan-dev'), 1)
+  assert.equal(limiter.queued(model.provider), 1)
   controller.abort(new Error('cancelled'))
 
   const events = await queuedEvents
   assert.equal(events.at(-1)?.type, 'error')
   assert.equal((events.at(-1) as { reason: string }).reason, 'aborted')
-  assert.equal(limiter.active('cirthan-dev'), 1, 'the running request keeps its slot')
-  assert.equal(limiter.queued('cirthan-dev'), 0)
+  assert.equal(limiter.active(model.provider), 1, 'the running request keeps its slot')
+  assert.equal(limiter.queued(model.provider), 0)
 
   provided.open()
   await runningDone
-  assert.equal(limiter.active('cirthan-dev'), 0, 'the running slot comes back')
+  assert.equal(limiter.active(model.provider), 0, 'the running slot comes back')
 })

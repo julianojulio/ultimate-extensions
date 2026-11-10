@@ -451,7 +451,7 @@ test('turning the splash off puts splash in disable once, and turning it on take
   const desligado = { extensions: { disable: ['splash'] } }
   assert.equal(ajustarSplash(desligado, false), desligado)
   // And turning on what is already on does not rewrite anything either.
-  const ligado = { modelFamilies: { fast: { model: 'cirthan-dev/x' } } }
+  const ligado = { modelFamilies: { fast: { model: 'anthropic/x' } } }
   assert.equal(ajustarSplash(ligado, true), ligado)
   // The other keys of the file are what the user wrote: they all stay, at any level.
   const cheio = {
