@@ -50,6 +50,8 @@ export type Host = {
   }
   resource<T>(key: string, create: () => T): T
   notice(message: string): void
+  /** Run `callback` on every harness open, at once when it is already open. */
+  onOpen(callback: () => Promise<void>): void
   userHome: string
 }
 
@@ -60,11 +62,19 @@ type State = {
   /** The provider's flow before this extension wrapped it, and the api it was registered with. */
   originals: Map<string, { api: Api; stream: Stream }>
   wrapped: Set<string>
+  /** The names in the limits this machine has no provider for, sorted. */
+  unknown: string[]
+  /** The unknown names the last install reported, so the same set is not reported again. */
+  reported: string
 }
 
-/** No arguments → which providers are wrapped, the ceilings, and the slots in flight and waiting. */
+/**
+ * No arguments → which providers are wrapped, which names have no provider here (sorted), the ceilings,
+ * and the slots in flight and waiting.
+ */
 export type Status = {
   wrapped: string[]
+  unknown: string[]
   limits: Record<string, number>
   active: Record<string, number>
   queued: Record<string, number>
@@ -77,32 +87,53 @@ const state = (host: Pick<Host, 'resource'>) =>
       limiter: new ProviderLimiter(() => shared.limits),
       originals: new Map(),
       wrapped: new Set(),
+      unknown: [],
+      reported: '',
     }
     return shared
   })
 
 /**
  * Wrap every provider this machine limits, or has limited before, that exists here. A reload
- * re-registers the same wrapper over the flow kept in the resource; a provider without
- * `streamSimple` is left alone and reported instead of registered.
+ * re-registers the same wrapper over the flow kept in the resource, a provider without
+ * `streamSimple` is left alone and reported instead of registered, and a name that has no provider
+ * here is reported once per set of names.
+ *
+ * `report` is what says whether the unknown names may be announced now: at load time the harness may not
+ * be open yet, and a notice emitted then reaches nobody — the notice goes out from the install that runs
+ * on open (`host.onOpen`), where there is someone to read it, and the set is deduplicated there.
  */
-export async function install(host: Host): Promise<State> {
+export async function install(host: Host, report = true): Promise<State> {
   const shared = state(host)
   // A reload keeps the semaphore (its slots and queue) and takes the ceilings saved in the file now.
   const { limits, problems } = await ceilings(host.userHome)
   for (const problem of problems) host.notice(`rate-limiter: ${problem}`)
   shared.limits = limits
+  // A name without a provider limits nothing. The normal path is a human editing the settings file,
+  // so the silence would leave a typo in place for good: say it, once per distinct set of names.
+  const unknown = Object.keys(limits)
+    .filter((provider) => !host.modelRuntime.getProvider(provider))
+    .sort()
+  if (report && unknown.join('\n') !== shared.reported) {
+    shared.reported = unknown.join('\n')
+    if (unknown.length) host.notice(noProvider(unknown))
+  }
+  shared.unknown = unknown
   // A provider left out of the settings today is still wrapped, with the code in force now: its
   // wrapper reads no ceiling and passes the call straight through.
   for (const provider of new Set([...Object.keys(limits), ...shared.originals.keys()])) {
     const current = host.modelRuntime.getProvider(provider)
     // A provider this machine does not have is not an error: the limits name machines' providers.
-    if (!current) continue
+    if (!current) {
+      shared.wrapped.delete(provider)
+      continue
+    }
     const api = current.getModels()[0]?.api
+    // The api and the flow are two halves of one registration, so a provider can lack either: the
+    // report names the half that is missing, or it would point at the wrong thing to fix.
     if (!current.streamSimple || !api) {
-      host.notice(
-        `rate-limiter: provider ${provider} exposes no streamSimple; it is running unlimited`,
-      )
+      const missing = api ? 'no streamSimple' : "no models' api"
+      host.notice(`rate-limiter: provider ${provider} exposes ${missing}; it is running unlimited`)
       continue
     }
     const original = shared.originals.get(provider) ?? { api, stream: current.streamSimple }
@@ -121,8 +152,20 @@ export async function install(host: Host): Promise<State> {
   return shared
 }
 
+/** One line for every name in the limits this machine has no provider for. */
+const noProvider = (names: string[]) =>
+  `rate-limiter: no provider named ${names.map((name) => `"${name}"`).join(', ')} on this machine; ` +
+  `${names.map((name) => `rateLimiter.limits.${name}`).join(' and ')} ` +
+  `${names.length === 1 ? 'limits' : 'limit'} nothing`
+
 export default async function rateLimiter(host: Host) {
-  await install(host)
+  // Before the harness is open nobody reads a notice: this first install wraps what exists, and says
+  // nothing about the names it cannot find.
+  await install(host, false)
+  // A provider can be registered after this facet loads (another extension opening, a partial reload):
+  // install wraps what exists now on every open, over the flow and the semaphore the resource keeps —
+  // and this is the install that reports the names this machine has no provider for.
+  host.onOpen(() => install(host).then(() => {}))
   return defineExtension({ name: 'rate-limiter' })
 }
 
@@ -211,7 +254,7 @@ function failure(model: Model<Api>, error: unknown, signal?: AbortSignal) {
 }
 
 export const actions = {
-  /** `{ wrapped, limits, active, queued }`: the providers held to a ceiling and the slots right now. */
+  /** `{ wrapped, unknown, limits, active, queued }`: what is held to a ceiling, and the slots right now. */
   async status(_args: JsonValue, ctx: { host: Pick<Host, 'resource'> }): Promise<Status> {
     const shared = state(ctx.host)
     // The limits are read from the semaphore, so a ceiling of another value needs no rebuild.
@@ -223,6 +266,6 @@ export const actions = {
       active[provider] = shared.limiter.active(provider)
       queued[provider] = shared.limiter.queued(provider)
     }
-    return { wrapped, limits, active, queued }
+    return { wrapped, unknown: shared.unknown, limits, active, queued }
   },
 }

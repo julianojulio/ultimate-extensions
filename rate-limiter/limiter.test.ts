@@ -1,6 +1,7 @@
 /**
  * `node --test limiter.test.ts` — the semaphore alone, the ceilings the settings file sets, then two
- * loads over the same host: a reload must leave one level of wrapper, not two.
+ * loads over the same host: a reload must leave one level of wrapper, not two, and a name with no
+ * provider here must be reported once per distinct set of names.
  *
  * The host is a fake and the settings live in a temporary home, so nothing here touches the
  * machine's providers or its own settings file.
@@ -19,7 +20,7 @@ import type {
   TranscriptContext,
 } from '@earendil-works/pi-ai'
 import { LIMITS, ProviderLimiter, resolveLimits } from './limiter.ts'
-import { install, limited } from './server.ts'
+import rateLimiter, { actions, install, limited } from './server.ts'
 import type { Host, Stream } from './server.ts'
 
 const tick = () => new Promise((resolve) => setImmediate(resolve))
@@ -89,25 +90,31 @@ const saved = (ceiling: number) =>
   JSON.stringify({ rateLimiter: { limits: { [model.provider]: ceiling } } })
 
 /**
- * A host with one provider, `openai`, on a flow the test opens and closes. The resources are one
- * map for the whole test, as in the host: two installs share one semaphore.
+ * A host with `openai` on a flow the test opens and closes; `flows` lets a test add a provider that
+ * another extension registers after this one loaded. The resources are one map for the whole test, as
+ * in the host: two installs share one semaphore. `openers` are the callbacks `onOpen` registered: the
+ * test runs them where the host runs them at the harness open, so a provider can appear between two.
  */
 function fakeHost(userHome: string) {
   const provided = gate()
+  const flows = new Map<string, ReturnType<typeof gate>>([[model.provider, provided]])
   const resources = new Map<string, unknown>()
   const notices: string[] = []
+  const openers: (() => Promise<void>)[] = []
   const runtime = {
-    registered: undefined as { api: Api; streamSimple: Stream } | undefined,
+    /** What the runtime holds per provider: the wrapper of the last registration. */
+    registered: new Map<string, { api: Api; streamSimple: Stream }>(),
     // Composed like the runtime: what a reload sees is the wrapper registered before.
     getProvider(id: string) {
-      if (id !== model.provider) return undefined
+      const flow = flows.get(id)
+      if (!flow) return undefined
       return {
         getModels: () => [model],
-        streamSimple: this.registered?.streamSimple ?? provided.stream,
+        streamSimple: this.registered.get(id)?.streamSimple ?? flow.stream,
       }
     },
-    registerProvider(_id: string, config: { api: Api; streamSimple: Stream }) {
-      this.registered = config
+    registerProvider(id: string, config: { api: Api; streamSimple: Stream }) {
+      this.registered.set(id, config)
     },
   }
   const host: Host = {
@@ -117,9 +124,12 @@ function fakeHost(userHome: string) {
       return resources.get(key) as T
     },
     notice: (notice: string) => notices.push(notice),
+    onOpen: (callback) => {
+      openers.push(callback)
+    },
     userHome,
   }
-  return { host, notices, provided, runtime }
+  return { flows, host, notices, openers, provided, runtime }
 }
 
 test('the ceiling holds and the queued request runs on a handed-over slot', async () => {
@@ -314,9 +324,9 @@ test('two loads over the same host leave one level of wrapper', async () => {
   const { host, notices, provided, runtime } = fakeHost(home)
 
   const state = await install(host)
-  const firstLoad = runtime.registered!.streamSimple
+  const firstLoad = runtime.registered.get(model.provider)!.streamSimple
   await install(host)
-  const secondLoad = runtime.registered!.streamSimple
+  const secondLoad = runtime.registered.get(model.provider)!.streamSimple
 
   assert.notEqual(secondLoad, firstLoad, 'the reload installs its own wrapper')
   assert.equal(
@@ -364,4 +374,146 @@ test('a stream aborted while queued ends with an aborted error and frees nothing
   provided.open()
   await runningDone
   assert.equal(limiter.active(model.provider), 0, 'the running slot comes back')
+})
+
+test('a name this machine has no provider for is reported once, and never wrapped', async () => {
+  const home = await tempHome(
+    JSON.stringify({ rateLimiter: { limits: { [model.provider]: 2, cirthan: 3 } } }),
+  )
+  try {
+    const { host, notices, provided, runtime } = fakeHost(home)
+    const state = await install(host)
+
+    assert.deepEqual(state.limits, { [model.provider]: 2, cirthan: 3 }, 'the limits in force')
+    assert.deepEqual([...state.wrapped], [model.provider], 'only the provider that exists here')
+    assert.deepEqual(state.unknown, ['cirthan'])
+    assert.deepEqual(notices, [
+      'rate-limiter: no provider named "cirthan" on this machine; ' +
+        'rateLimiter.limits.cirthan limits nothing',
+    ])
+
+    const reloaded = await install(host)
+    assert.equal(reloaded, state, 'the same state')
+    assert.deepEqual(state.unknown, ['cirthan'])
+    assert.equal(notices.length, 1, 'the same set of names is not reported again')
+
+    // One level of wrapper: a request in flight holds one slot, and the second load wraps the
+    // provider's own flow, not the wrapper the first load left in the runtime.
+    assert.equal(state.originals.get(model.provider)!.stream, provided.stream)
+    const done = consume(runtime.registered.get(model.provider)!.streamSimple(model, context))
+    await tick()
+    assert.equal(state.limiter.active(model.provider), 1)
+    provided.open()
+    await done
+    assert.equal(provided.calls.count, 1, 'the provider was called once')
+    assert.equal(state.limiter.active(model.provider), 0)
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
+})
+
+test('the report comes again when the set of names with no provider changes', async () => {
+  const home = await tempHome(
+    JSON.stringify({ rateLimiter: { limits: { [model.provider]: 1, cirthan: 3 } } }),
+  )
+  const settings = join(home, '.ultimate/settings.json')
+  try {
+    const { host, notices } = fakeHost(home)
+    await install(host)
+    assert.equal(notices.length, 1)
+
+    // A second name with no provider here: the new set is reported, in one line.
+    await writeFile(
+      settings,
+      JSON.stringify({ rateLimiter: { limits: { [model.provider]: 1, cirthan: 3, typo: 2 } } }),
+    )
+    const both = await install(host)
+    assert.deepEqual(both.unknown, ['cirthan', 'typo'])
+    assert.equal(notices.length, 2)
+    assert.equal(
+      notices[1],
+      'rate-limiter: no provider named "cirthan", "typo" on this machine; ' +
+        'rateLimiter.limits.cirthan and rateLimiter.limits.typo limit nothing',
+    )
+
+    // The person fixes both names: nothing left to report, and nothing reported.
+    await writeFile(settings, saved(1))
+    const fixed = await install(host)
+    assert.deepEqual(fixed.unknown, [])
+    assert.equal(notices.length, 2, 'an empty set of names reports nothing')
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
+})
+
+test('the extension installs again on every harness open', async () => {
+  const home = await tempHome(
+    JSON.stringify({ rateLimiter: { limits: { [model.provider]: 1, late: 1 } } }),
+  )
+  try {
+    const { flows, host, notices, openers, runtime } = fakeHost(home)
+    await rateLimiter(host)
+    assert.equal(openers.length, 1, 'the harness open runs install again')
+    // Before the harness is open nobody reads a notice: the load-time install wraps and says nothing.
+    assert.equal(notices.length, 0, 'the load reports nothing')
+    assert.equal(runtime.registered.has('late'), false, 'it has no provider here yet')
+
+    // The open that finds the same machine says it, now that there is someone to read it — once.
+    for (const opener of openers) await opener()
+    assert.equal(notices.length, 1, 'the name with no provider is reported on the open')
+    assert.deepEqual((await actions.status({}, { host })).unknown, ['late'])
+
+    // Another extension registers the provider after this facet loaded: the next open wraps it.
+    flows.set('late', gate())
+    for (const opener of openers) await opener()
+    assert.equal(runtime.registered.has('late'), true, 'the provider that appeared is wrapped')
+    const status = await actions.status({}, { host })
+    assert.deepEqual(status.unknown, [], 'and it is no longer a name without a provider')
+    assert.deepEqual(status.wrapped, [model.provider, 'late'].sort())
+    assert.equal(notices.length, 1, 'an empty set of names reports nothing')
+
+    // A second open over an unchanged machine, with the same names: still one notice.
+    for (const opener of openers) await opener()
+    assert.equal(notices.length, 1)
+    assert.deepEqual([...runtime.registered.keys()].sort(), [model.provider, 'late'].sort())
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
+})
+
+test('a provider that exists but cannot be wrapped says which half is missing', async () => {
+  const home = await tempHome(
+    JSON.stringify({ rateLimiter: { limits: { nomodels: 1, nostream: 1 } } }),
+  )
+  try {
+    const notices: string[] = []
+    const resources = new Map<string, unknown>()
+    const flow = gate()
+    const host: Host = {
+      modelRuntime: {
+        getProvider: (id: string) =>
+          id === 'nomodels'
+            ? { getModels: () => [], streamSimple: flow.stream }
+            : id === 'nostream'
+              ? { getModels: () => [model], streamSimple: undefined as unknown as Stream }
+              : undefined,
+        registerProvider: () => assert.fail('nothing here can be wrapped'),
+      },
+      resource: <T,>(key: string, create: () => T): T => {
+        if (!resources.has(key)) resources.set(key, create())
+        return resources.get(key) as T
+      },
+      notice: (notice: string) => notices.push(notice),
+      onOpen: () => {},
+      userHome: home,
+    }
+    const state = await install(host)
+    assert.deepEqual(state.unknown, [], 'both providers exist, they just cannot be wrapped')
+    assert.deepEqual(notices, [
+      "rate-limiter: provider nomodels exposes no models' api; it is running unlimited",
+      'rate-limiter: provider nostream exposes no streamSimple; it is running unlimited',
+    ])
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
 })

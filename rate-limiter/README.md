@@ -19,10 +19,25 @@ trace keeps 7 days).
 3. registers the same provider back with a `streamSimple` that waits for a slot, runs the original flow
    and gives the slot back when the stream ends — including when it fails or is aborted.
 
-If the provider does not exist on this machine, nothing happens to it (one listed in the `auth.json`
-here but not in `models.json` stays out, and the `status` shows that). If it exists and
-has no `streamSimple`, **it registers nothing** and warns in a notification: a broken provider would
-break every conversation on the machine.
+If the provider does not exist on this machine, nothing is registered for it: it stays out of
+`wrapped`, `status` lists it in `unknown`, and the extension says so once per distinct set of such
+names — one line, not one per name, and not again on every open while the set is the same. The line goes
+out from the install that runs **when the harness opens**, not from the one at load: before the harness
+is open there is nobody to read a notice, and a name that is only said then would leave the typo in
+place for good, which is the whole problem.
+
+```text
+rate-limiter: no provider named "cirthan" on this machine; rateLimiter.limits.cirthan limits nothing
+```
+
+The normal way to that line is a person editing `settings.json`, so silence would leave a typo naming
+nothing for as long as nobody looked. If the provider exists and has no `streamSimple`, or no model
+whose `api` it could be registered with, **it registers nothing** and the notification says which of
+the two is missing: a broken provider would break every conversation on the machine.
+
+The extension runs this again on every harness open (`host.onOpen`), so a provider registered after it
+loaded — by another extension opening, or by a partial reload — is wrapped then, over the same flow and
+the same semaphore.
 
 A provider outside the ceiling (`Infinity`) gets a slot that counts for nothing and never enters the
 queue.
@@ -102,11 +117,13 @@ The `status` action, with no arguments:
 
 ```sh
 ultimate.action('rate-limiter', 'status')
-# { wrapped: ['anthropic'], limits: { anthropic: 3 },
+# { wrapped: ['anthropic'], unknown: [], limits: { anthropic: 3 },
 #   active: { anthropic: 0 }, queued: { anthropic: 0 } }
 ```
 
-`wrapped` is what is really wrapped; `active` and `queued` are the slots in flight and in the queue.
+`wrapped` is what is really wrapped; `unknown` is the names in the limits this machine has no provider
+for, sorted (empty when every name has one); `active` and `queued` are the slots in flight and in the
+queue.
 
 ## Tests
 
@@ -124,9 +141,11 @@ The semaphore's test is pure (no host): ceiling, FIFO queue, idempotent release,
 infinite ceiling. The ones reading the ceilings use a temporary `HOME`: ceiling coming from the
 `settings.json`, missing key → not limited, invalid JSON → not limited **and** a notification,
 `0`/negative/non-whole refused with a notification, and the file saved again applying on the **same**
-semaphore with the queue in the same order. The last two use a fake host: the two loads (a reload
-without wrapping twice) and the stream aborted in the queue (it ends with an `error` event of reason
-`aborted` and holds no slot).
+semaphore with the queue in the same order. The others use a fake host: the two loads (a reload without
+wrapping twice), the stream aborted in the queue (it ends with an `error` event of reason `aborted` and
+holds no slot), a name with no provider here (reported once per set of names, never wrapped), the
+second install wrapping a provider that appeared after the first, the harness open running `install`
+again, and the notification naming the half a provider lacks.
 
 ## Assumptions about the pi API
 
