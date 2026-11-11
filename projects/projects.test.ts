@@ -26,6 +26,9 @@
  *   does not lie;
  * - the splash button writes only the `splash` entry of `extensions.disable` in the user's settings,
  *   preserving the other keys, without duplicating, and refusing what the core would refuse whole;
+ * - forgetting a project writes only its **home** into `projects.hidden`, once, preserving the other
+ *   keys; the `list` does not return a hidden home, and a crooked file is read as hiding nobody and
+ *   refused instead of being rewritten.
  * - the folder of the `+` dialog becomes an absolute path with `~` expanded, and a relative path is
  *   refused instead of becoming some folder at random;
  * - the home of a new project is the same one Ultimate calculates
@@ -34,10 +37,14 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
+  adjustHidden,
   adjustSplash,
   startArgs,
   absolutePath,
   command,
+  hiddenHomes,
+  homeKey,
+  isHidden,
   workingCount,
   stopDecision,
   groups,
@@ -61,6 +68,7 @@ import {
   uniqueByRoot,
   userSettings,
   splashEnabled,
+  withoutHidden,
   hasMeasurement,
   questionsTitle,
   tileTitle,
@@ -590,4 +598,128 @@ test('the splash button’s sentence says the state and what the click does', ()
   assert.equal(splashLabel(false), 'Splash on project switch: off — turn it on')
   // Before the first reading the button does not guess a state.
   assert.equal(splashLabel(undefined), 'Splash on project switch: unknown')
+})
+
+// The home is what is stored, not the project's name: a name can repeat, and the `list` returns `home`.
+const home = '/home/j/.ultimate/projects/app-1a2b3c4d'
+const other = '/home/j/.ultimate/projects/other-5e6f7a8b'
+/** This machine's home: the `~` of the panel and of the settings file is expanded against it. */
+const machine = '/home/j'
+
+test('the homes the machine hides are read from projects.hidden, and a crooked file hides nobody', () => {
+  assert.deepEqual(hiddenHomes({ projects: { hidden: [home] } }), [home])
+  assert.deepEqual(hiddenHomes({ projects: { hidden: [home, other] } }), [home, other])
+  // Nothing hidden: no file, no `projects`, no `hidden`, an empty list.
+  assert.deepEqual(hiddenHomes(undefined), [])
+  assert.deepEqual(hiddenHomes({}), [])
+  assert.deepEqual(hiddenHomes({ projects: {} }), [])
+  assert.deepEqual(hiddenHomes({ projects: { hidden: [] } }), [])
+  // What the core would not read whole hides nobody either: a broken shape is not a list of homes.
+  assert.deepEqual(hiddenHomes([]), [])
+  assert.deepEqual(hiddenHomes({ projects: [] }), [])
+  assert.deepEqual(hiddenHomes({ projects: 'app' }), [])
+  assert.deepEqual(hiddenHomes({ projects: { hidden: home } }), [])
+  assert.deepEqual(hiddenHomes({ projects: { hidden: {} } }), [])
+  // A list with something else inside it: what is not a home is not a home to hide.
+  assert.deepEqual(hiddenHomes({ projects: { hidden: [home, 3, null, {}, other] } }), [home, other])
+})
+
+test('hiding a home puts it in projects.hidden once, and showing it again takes it out', () => {
+  // Hiding the first project has nothing to preserve but the other keys.
+  assert.deepEqual(adjustHidden({}, home, true, machine), { projects: { hidden: [home] } })
+  assert.deepEqual(adjustHidden({ projects: { hidden: [other] } }, home, true, machine), {
+    projects: { hidden: [other, home] },
+  })
+  // No duplicating: hiding what is already hidden does not touch the object (nor the file).
+  const listed = { projects: { hidden: [home] } }
+  assert.equal(adjustHidden(listed, home, true, machine), listed)
+  // Showing it again takes only its own home out — and leaves an empty list rather than a deleted key.
+  assert.deepEqual(adjustHidden({ projects: { hidden: [other, home] } }, home, false, machine), {
+    projects: { hidden: [other] },
+  })
+  assert.deepEqual(adjustHidden({ projects: { hidden: [home] } }, home, false, machine), {
+    projects: { hidden: [] },
+  })
+  // Showing a home that is not hidden does not rewrite anything either.
+  const notListed = { projects: { hidden: [other] } }
+  assert.equal(adjustHidden(notListed, home, false, machine), notListed)
+  // The other keys of the file are what the user wrote: they all stay, at any level — including the keys
+  // of `projects` itself.
+  const full = {
+    modelFamilies: { default: 'fast' },
+    lander: { checks: [['node --test', { timeout: 120 }]] },
+    extensions: { disable: ['splash'] },
+    projects: { hidden: [other], note: 'mine' },
+  }
+  assert.deepEqual(adjustHidden(full, home, true, machine), {
+    ...full,
+    projects: { hidden: [other, home], note: 'mine' },
+  })
+})
+
+test('a home written with ~ or with a trailing slash is the same home', () => {
+  assert.equal(homeKey(home, machine), home)
+  assert.equal(homeKey('~/.ultimate/projects/app-1a2b3c4d', machine), home)
+  assert.equal(homeKey('~/.ultimate/projects/app-1a2b3c4d/', machine), home)
+  assert.equal(homeKey('/home/j/.ultimate/other/../projects/app-1a2b3c4d', machine), home)
+  // A path of somewhere else, or something that is not an absolute path, matches no home of the machine.
+  assert.equal(
+    homeKey('/home/other/.ultimate/projects/app-1a2b3c4d', machine),
+    '/home/other/.ultimate/projects/app-1a2b3c4d',
+  )
+  assert.equal(homeKey('app', machine), 'app')
+  // A list written by hand with the `~` the panel shows hides the project — and asking for it again (or
+  // taking it out of the list) knows it is the same home, written the other way.
+  assert.deepEqual(withoutHidden([{ home }], ['~/.ultimate/projects/app-1a2b3c4d'], machine), [])
+  assert.equal(isHidden(home, ['~/.ultimate/projects/app-1a2b3c4d'], machine), true)
+  assert.equal(isHidden(home, [], machine), false)
+  assert.deepEqual(
+    adjustHidden({ projects: { hidden: ['~/.ultimate/projects/app-1a2b3c4d'] } }, home, false, machine),
+    { projects: { hidden: [] } },
+  )
+  const tilde = { projects: { hidden: ['~/.ultimate/projects/app-1a2b3c4d'] } }
+  assert.equal(adjustHidden(tilde, home, true, machine), tilde)
+})
+
+test('forgetting refuses, without writing, what it cannot rewrite whole', () => {
+  // A file that is not an object is no settings at all.
+  for (const crooked of [[], 'x', null, undefined, 7]) {
+    assert.throws(() => adjustHidden(crooked, home, true, machine), /settings must be a JSON object/)
+  }
+  // A `projects` that is not an object, and a `hidden` that is not a list of homes: the core would throw
+  // the whole file away, and the user would lose the other keys.
+  for (const crooked of [[], 'app', null, 3]) {
+    assert.throws(
+      () => adjustHidden({ projects: crooked }, home, true, machine),
+      /projects must be a JSON object/,
+    )
+  }
+  assert.throws(
+    () => adjustHidden({ projects: { hidden: home } }, home, true, machine),
+    /must be an array of homes/,
+  )
+  assert.throws(
+    () => adjustHidden({ projects: { hidden: [1] } }, home, false, machine),
+    /must be an array of homes/,
+  )
+  assert.throws(
+    () => adjustHidden({ projects: { hidden: {} } }, home, false, machine),
+    /must be an array of homes/,
+  )
+})
+
+test('the rail does not draw a hidden home, and draws the rest as they came', () => {
+  const app = { name: 'app', root: '/src/app', home, current: false }
+  const elsewhere = { name: 'other', root: '/src/other', home: other, current: false }
+  assert.deepEqual(withoutHidden([app, elsewhere], [], machine), [app, elsewhere])
+  assert.deepEqual(withoutHidden([app, elsewhere], [home], machine), [elsewhere])
+  assert.deepEqual(withoutHidden([app, elsewhere], [other, home], machine), [])
+  // The home that is not among the rows hides nobody, and the rows come back untouched and in order.
+  assert.deepEqual(
+    withoutHidden([app, elsewhere], ['/home/j/.ultimate/projects/gone-00000000'], machine),
+    [app, elsewhere],
+  )
+  // A row without a home cannot be told apart: it stays.
+  const nameless = { name: 'x' }
+  assert.deepEqual(withoutHidden([nameless], [home], machine), [nameless])
 })

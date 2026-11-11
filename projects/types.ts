@@ -45,7 +45,11 @@ export interface Project {
   command?: string
 }
 
-/** The whole list and when it was read: the rail shows the time in the refresh button's panel. */
+/**
+ * The whole list and when it was read. The time is not on a button: a reading's worth is said by the tile
+ * it belongs to (`measured at` in the tile's sentence, from that reading's own time), and the older this
+ * one is, the older those sentences are.
+ */
 export interface Section {
   projects: Project[]
   at: string
@@ -85,10 +89,22 @@ export interface State {
 /**
  * What the `create` action did: it brought a host up for a new folder (`created: true`) or selected
  * the project that was already that folder — up, or coming up now —, without a second host for the
- * same root.
+ * same root. `unhidden` says the project was hidden from the rail and came back: asking for its folder
+ * again is asking for the project.
  */
 export interface CreateResult {
   created: boolean
+  project: Project
+  unhidden?: boolean
+}
+
+/**
+ * What the `forget` action did: the project's home entered `projects.hidden` of this machine's settings,
+ * so the `list` no longer returns it and the rail no longer draws it. **Nothing was deleted** — the home
+ * stays where it is, with the project's conversations.
+ */
+export interface ForgetResult {
+  hidden: true
   project: Project
 }
 

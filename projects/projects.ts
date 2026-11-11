@@ -1,9 +1,9 @@
 /**
  * The pure calculations of the Projects rail: the initials of the tile, the two groups (running and
  * stopped), the path typed into the `+` dialog, the central home a new project will occupy, the port
- * that only the panel shows, what the stop button decides, and what the splash button writes to this
- * machine's settings. Nothing here reads the machine, opens a process or makes a request —
- * `projects.test.ts` covers all of it with fixtures.
+ * that only the panel shows, what the stop button decides, and what the splash button and the `forget`
+ * button write to this machine's settings. Nothing here reads the machine, opens a process or makes a
+ * request — `projects.test.ts` covers all of it with fixtures.
  *
  * The state is never the colour alone: the rail writes `running`/`stopped` in each tile's panel, the
  * group is the position (running above the line, stopped below) and what was measured comes as a
@@ -445,16 +445,110 @@ export function splashLabel(enabled: boolean | undefined): string {
   return `Splash on project switch: ${enabled ? 'on — turn it off' : 'off — turn it on'}`
 }
 
+/**
+ * The homes this machine's settings hide from the rail: `projects.hidden` in
+ * `<user home>/.ultimate/settings.json`. What is stored is the **home** (`~/.ultimate/projects/app-<8>`),
+ * not the project's name: a name can repeat, and the home is what the `list` returns.
+ *
+ * A missing file, a `projects` that is not an object or a `hidden` that is not a list are read as
+ * nothing hidden — the same tolerance `splashEnabled` has, since a file the core does not read whole
+ * does not hide anyone either. What is not a string is not a home, and is ignored.
+ */
+export function hiddenHomes(settings: unknown): string[] {
+  if (!isObject(settings)) return []
+  const projects = settings.projects
+  if (!isObject(projects)) return []
+  const hidden = projects.hidden
+  if (!Array.isArray(hidden)) return []
+  return hidden.filter((home): home is string => typeof home === 'string')
+}
+
+/**
+ * A home the way a person writes it in `projects.hidden`: the machine's own home may be abbreviated with
+ * `~` — which is how the tile's panel shows it — and `~/x`, a trailing slash or `..` do not make another
+ * home. Two writings of the same home are the same home, so a hand-edited list does not silently hide
+ * nobody. What is not an absolute path stays as it is: it matches no home of the machine.
+ */
+export function homeKey(home: string, userHome: string): string {
+  return absolutePath(home, userHome) ?? home
+}
+
+/**
+ * Is that home in the list? A home written the other way — with `~`, with a trailing slash — is the
+ * same home, and `forget` and `create` must agree with the `list` about which entries hide it.
+ */
+export function isHidden(home: string, hidden: readonly string[], userHome: string): boolean {
+  const key = homeKey(home, userHome)
+  return hidden.some((item) => homeKey(item, userHome) === key)
+}
+
+/**
+ * The rows the rail draws: a home in that list is not among them — the rest stays as it came, in the
+ * same order. The row itself is untouched: the window of a hidden project keeps working, it only stops
+ * having a tile here. A row without a home cannot be told apart, and stays.
+ */
+export function withoutHidden<T extends object>(
+  projects: readonly T[],
+  hidden: readonly string[],
+  userHome: string,
+): T[] {
+  if (!hidden.length) return [...projects]
+  return projects.filter((project) => {
+    const home = (project as { home?: unknown }).home
+    return typeof home !== 'string' || !isHidden(home, hidden, userHome)
+  })
+}
+
+/**
+ * The same settings with one home hidden from the rail (`hidden: true`) or shown again: the home enters
+ * `projects.hidden` **once**, or leaves it, and every other key of the file stays as it is — the keys
+ * this extension does not know included. Which entries are the same home is decided by `homeKey`, so a
+ * list written by hand with the `~` form the panel shows works as well. Showing the last hidden home
+ * leaves an empty list rather than deleting the key: what this extension did not write is not erased.
+ *
+ * What this extension cannot rewrite whole is refused, as `adjustSplash` does: a value that is not an
+ * object, a `projects` that is not an object, a `hidden` that is not a list of homes throw, and whoever
+ * called writes nothing. The object returned is **the same** one that came in when there is nothing to
+ * change — whoever writes compares and does not write again.
+ */
+export function adjustHidden(
+  settings: unknown,
+  home: string,
+  hidden: boolean,
+  userHome: string,
+): Record<string, unknown> {
+  const object = asObject(settings, 'settings')
+  const projects = object.projects === undefined ? undefined : asObject(object.projects, 'projects')
+  const homes = projects?.hidden === undefined ? [] : asHomes(projects.hidden)
+  const key = homeKey(home, userHome)
+  if (hidden === isHidden(home, homes, userHome)) return object
+  const next = hidden
+    ? [...homes, home]
+    : homes.filter((item) => homeKey(item, userHome) !== key)
+  return { ...object, projects: { ...projects, hidden: next } }
+}
+
 /** A JSON object — what can be rewritten preserving the keys; anything else is refused. */
 function asObject(value: unknown, field: string): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value))
-    throw new Error(`${field} must be a JSON object`)
-  return value as Record<string, unknown>
+  if (!isObject(value)) throw new Error(`${field} must be a JSON object`)
+  return value
+}
+
+/** A JSON object of a settings file: what the keys of the file can be read from. */
+function isObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
 }
 
 /** A list of extension names: a list with something else inside it is not a list of names. */
 function asNames(value: unknown): string[] {
   if (!Array.isArray(value) || value.some((name) => typeof name !== 'string'))
     throw new Error('extensions.disable must be an array of names')
+  return value as string[]
+}
+
+/** A list of homes: a list with something else inside it is not a list of homes. */
+function asHomes(value: unknown): string[] {
+  if (!Array.isArray(value) || value.some((home) => typeof home !== 'string'))
+    throw new Error('projects.hidden must be an array of homes')
   return value as string[]
 }

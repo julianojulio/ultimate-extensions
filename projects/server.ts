@@ -40,15 +40,17 @@
  *
  * The true state is always the re-read lock, never a list in memory: the extension may reload between
  * one action and the other. There is no poll — the screen reads on opening and again on the refresh
- * button. `stop`, `create` and `splash` are **user actions**: an agent calling the extension cannot
- * stop a host, create one or flip this machine's splash behind the screen (`list`, `measure`, `state`
- * and `start` remain callable).
+ * button. `stop`, `create`, `splash` and `forget` are **user actions**: an agent calling the extension
+ * cannot stop a host, create one, hide one from the rail or flip this machine's splash behind the screen
+ * (`list`, `measure`, `state` and `start` remain callable).
  *
  * Outside the homes of the projects it brought up, this extension writes **one** file only: this
- * machine's `~/.ultimate/settings.json`, when the button at the bottom of the rail turns the splash
- * animation on or off (the `splash` action). There too nothing comes from memory: the action reads the
- * file, touches only the `splash` entry of `extensions.disable` and refuses, without writing, what the
- * core would refuse whole — invalid JSON, an `extensions` that is not an object (see README).
+ * machine's `~/.ultimate/settings.json` — the splash animation on or off (the `splash` action) and the
+ * homes the rail hides (the `forget` action, and `create` bringing one of them back). There too nothing
+ * comes from memory: each action reads the file, touches only its own key (`extensions.disable`'s
+ * `splash` entry, `projects.hidden`) and refuses, without writing, what the core would refuse whole —
+ * invalid JSON, an `extensions` that is not an object, a `projects` that is not an object (see README).
+ * **Nothing is deleted**: forgetting a project only adds its home to a list.
  */
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
@@ -72,10 +74,13 @@ import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
 import type { JsonValue } from '@earendil-works/chord'
 import { defineExtension } from '@earendil-works/pi-durable'
 import {
+  adjustHidden,
   adjustSplash,
   startArgs,
   absolutePath,
   command,
+  hiddenHomes,
+  isHidden,
   stopDecision,
   hostOrigin,
   lockPort,
@@ -84,12 +89,14 @@ import {
   uniqueByRoot,
   userSettings,
   splashEnabled,
+  withoutHidden,
 } from './projects.ts'
 import type {
   State,
   Measurement,
   Project,
   CreateResult,
+  ForgetResult,
   StopResult,
   Section,
   Splash,
@@ -246,7 +253,8 @@ function nameArgument(args: JsonValue): string {
 }
 
 /** The project by name, read from disk now (`host.projects()` reads the lock on every call). The list is
- * the one the rail shows — one row per project — so a name addresses the same home the tile does. */
+ * the one the actions address — one row per project, the homes the rail hides included: hiding is a
+ * display decision, and a hidden project is still a project. */
 async function findProject(ctx: Context, name: string): Promise<HostProject> {
   const project = uniqueByRoot(await ctx.host.projects()).find((item) => item.name === name)
   if (!project) throw new Error(`Unknown project ${JSON.stringify(name)}`)
@@ -303,7 +311,7 @@ async function remember(home: string, pid: number, port: number) {
 }
 
 /** Forgets the record, only when it still names `pid`: another one's pid is not erased by mistake. */
-async function forget(home: string, pid: number | undefined) {
+async function forgetRecord(home: string, pid: number | undefined) {
   if ((await remembered(home)) === pid) await rm(join(home, RECORD), { force: true })
 }
 
@@ -315,18 +323,21 @@ function userHome(): string {
 }
 
 /**
- * This machine's settings, read on the spot: the object, or the reason it does not serve for a write. A
- * missing file is an empty object — turning the splash off creates the file, turning it on has nothing to
- * create.
+ * This machine's settings, read on the spot: the object, or the problem it has for a write (which the
+ * caller refuses with). A missing file is an empty object — turning the splash off creates the file,
+ * turning it on has nothing to create.
  */
-async function readSettings(): Promise<{ settings?: Record<string, unknown>; error?: string }> {
+async function readSettings(): Promise<{
+  settings?: Record<string, unknown>
+  problem?: string
+}> {
   const path = userSettings(userHome())
   let text: string
   try {
     text = await readFile(path, 'utf8')
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}
-    return { error: `Cannot change the splash: ${path}: ${reason(error)}` }
+    return { problem: `${path}: ${reason(error)}` }
   }
   try {
     const value: unknown = JSON.parse(text)
@@ -334,7 +345,7 @@ async function readSettings(): Promise<{ settings?: Record<string, unknown>; err
       throw new Error('settings must be a JSON object')
     return { settings: value as Record<string, unknown> }
   } catch (error) {
-    return { error: `Cannot change the splash: ${path}: ${reason(error)}. Nothing was written` }
+    return { problem: `${path}: ${reason(error)}` }
   }
 }
 
@@ -383,12 +394,45 @@ async function serialised<T>(ctx: Context, path: string, work: () => Promise<T>)
 }
 
 /**
- * The splash as **this machine's** settings leave it now, read on every call: nothing in memory,
- * because the extension reloads between one and the other. A file that cannot be read counts as on —
- * which is what the core does with it too.
+ * Takes a home out of the hidden list, as `forget` puts it in: only the `projects.hidden` entry is
+ * touched, every other key of the file stays, and what cannot be rewritten whole is refused without
+ * writing anything.
  */
-async function splashNow(): Promise<boolean> {
-  return splashEnabled((await readSettings()).settings)
+async function showAgain(ctx: Context, home: string): Promise<void> {
+  const path = userSettings(userHome())
+  await serialised(ctx, path, async () => {
+    const parsed = await readSettings()
+    if (parsed.problem)
+      throw new Error(`Cannot show the project again: ${parsed.problem}. Nothing was written`)
+    const before = parsed.settings ?? {}
+    let after: Record<string, unknown>
+    try {
+      after = adjustHidden(before, home, false, userHome())
+    } catch (error) {
+      throw new Error(
+        `Cannot show the project again: ${path}: ${reason(error)}. Nothing was written`,
+      )
+    }
+    if (after !== before) await writeSettings(path, after)
+  })
+}
+
+/**
+ * The reason a hidden home cannot leave the list, read **before** a host is brought up for it: the write
+ * would refuse a file it cannot rewrite whole, and refusing only afterwards would leave a running host
+ * behind a tile that never came back.
+ */
+function unhideProblem(
+  parsed: { settings?: Record<string, unknown>; problem?: string },
+  home: string,
+): string | undefined {
+  if (parsed.problem) return parsed.problem
+  try {
+    adjustHidden(parsed.settings ?? {}, home, false, userHome())
+    return undefined
+  } catch (error) {
+    return `${userSettings(userHome())}: ${reason(error)}`
+  }
 }
 
 /**
@@ -640,7 +684,7 @@ async function bringUp(
    * folder that never became a project. */
   const fail = async (cause: string): Promise<never> => {
     await terminate(pid)
-    await forget(project.home, pid)
+    await forgetRecord(project.home, pid)
     if (options.newFolder) await discardHome(project.home)
     const tail = await logTail(options.log)
     throw new Error(`${project.name} did not come up — ${cause}${tail ? `: ${tail}` : ''}`)
@@ -685,16 +729,23 @@ export const actions = {
   /**
    * This machine's projects, with the state and the command. With no argument, it measures each host that
    * is up (it is what the phone's list shows); `{ measure: false }` is the rail's cheap read, which shows no
-   * number.
+   * number. A project whose home this machine hides (`projects.hidden` in the settings) is not among them:
+   * the rail draws what this returns, so hiding is all it takes.
    */
   async list(args: JsonValue, ctx: Context): Promise<Section> {
     // A home without a `project.json` (a start that died before registering) is no project of anyone's:
     // it has no path, it is neither brought up nor measured — showing its tile would lie about the machine.
     // Two homes of the same project are one project: the tile is one, and the actions address the home the
     // row says.
-    const projects = uniqueByRoot((await ctx.host.projects()).filter((project) => project.root))
-    // The button at the bottom of the rail says the state read now, not the one from an earlier opening.
-    const splash = await splashNow()
+    // This machine's settings are read on every call, nothing in memory: the splash button's state and the
+    // homes the rail hides come from the same file, now.
+    const settings = await readSettings()
+    const projects = withoutHidden(
+      uniqueByRoot((await ctx.host.projects()).filter((project) => project.root)),
+      hiddenHomes(settings.settings),
+      userHome(),
+    )
+    const splash = splashEnabled(settings.settings)
     const at = new Date().toISOString()
     if (!wantsMeasurement(args))
       return { projects: projects.map((project) => toRow(project)), at, splash }
@@ -732,9 +783,10 @@ export const actions = {
   /**
    * Turns the splash animation on or off in **this machine's** settings
    * (`<user home>/.ultimate/settings.json`): `splash` enters `extensions.disable` (turning off) or leaves
-   * it (turning on), and every other key of the file stays as it is. It is the only place where this
-   * extension writes outside the home of a project it brought up itself, and a project's settings is never
-   * touched — a project can say the opposite on top, and that is its decision.
+   * it (turning on), and every other key of the file stays as it is — this extension's `projects.hidden`
+   * included, `modelFamilies` or whatever else there is. A project's own settings is never touched: a
+   * project can say the opposite on top, and that is its decision. Two actions write this file: this one
+   * and `forget` (see the header of this file).
    *
    * What could not be preserved is refused **without writing**: invalid JSON, a file that is not an object,
    * an `extensions` that is not an object, a `disable` that is not a list of names — the core would reject
@@ -747,7 +799,8 @@ export const actions = {
     const path = userSettings(userHome())
     await serialised(ctx, path, async () => {
       const parsed = await readSettings()
-      if (parsed.error) throw new Error(parsed.error)
+      if (parsed.problem)
+        throw new Error(`Cannot change the splash: ${parsed.problem}. Nothing was written`)
       // With no file, the starting point is an empty object: turning it off creates the file, turning it on
       // creates nothing.
       const before = parsed.settings ?? {}
@@ -852,13 +905,24 @@ export const actions = {
     const projects = uniqueByRoot(await ctx.host.projects())
     const existing = projects.find((project) => project.root === root)
     if (existing) {
-      const origin = existing.running ? hostOrigin(existing.running.url) : undefined
-      if ((existing.running && origin) || existing.current)
-        return { created: false, project: toRow(existing) }
-      return {
-        created: false,
-        project: await bringUp(ctx, existing, { log: join(existing.home, LOG) }),
+      // Asking for that folder again is asking for the project: one hidden from the rail comes back, and
+      // the answer says so. It is the only case in which this extension takes a home out of the list.
+      const parsed = await readSettings()
+      const hidden = isHidden(existing.home, hiddenHomes(parsed.settings), userHome())
+      // What would be refused after the host came up is refused before it: a file that cannot be rewritten
+      // whole is not worth a running host.
+      if (hidden) {
+        const problem = unhideProblem(parsed, existing.home)
+        if (problem)
+          throw new Error(`Cannot show ${existing.name} again: ${problem}. Nothing was written`)
       }
+      const origin = existing.running ? hostOrigin(existing.running.url) : undefined
+      const project =
+        (existing.running && origin) || existing.current
+          ? toRow(existing)
+          : await bringUp(ctx, existing, { log: join(existing.home, LOG) })
+      if (hidden) await showAgain(ctx, existing.home)
+      return { created: false, project, ...(hidden ? { unhidden: true } : {}) }
     }
     // Two folders with the same project name cannot be told apart here: the actions speak by name, and a
     // second `app` would make the first's tile answer for the second (and stop it in its place).
@@ -906,17 +970,55 @@ export const actions = {
     }
     if (decision.action === 'stop') {
       await shutDown(project.home, decision.pid)
-      await forget(project.home, decision.pid)
+      await forgetRecord(project.home, decision.pid)
     }
     return { stopped: true, project: toRow(await findProject(ctx, name)) }
+  },
+
+  /**
+   * Hides a project from the rail: its home enters `projects.hidden` of **this machine's** settings
+   * (`<user home>/.ultimate/settings.json`), and `list` stops returning it — which is all the rail needs.
+   * **Nothing is deleted**: the home stays where it is, with the project's conversations, and taking the
+   * home out of that list is the way back (README).
+   *
+   * This window's project is refused: what serves the screen does not make itself disappear. So is a host
+   * that is up (stop it first — a living host is not lost behind a hidden tile) and a name this machine
+   * has no project for (`findProject`). As `splash`, it reads the file now, keeps every other key and
+   * refuses, without writing, what it cannot rewrite whole — invalid JSON, a `projects` that is not an
+   * object, a `hidden` that is not a list.
+   */
+  async forget(args: JsonValue, ctx: Context): Promise<ForgetResult> {
+    const name = nameArgument(args)
+    const project = await findProject(ctx, name)
+    if (project.current)
+      throw new Error(`${name} runs this window: a window does not hide the project that serves it`)
+    if (project.running) throw new Error(`${name} is running: stop it before hiding it from the rail`)
+    const path = userSettings(userHome())
+    await serialised(ctx, path, async () => {
+      const parsed = await readSettings()
+      if (parsed.problem)
+        throw new Error(`Cannot forget ${name}: ${parsed.problem}. Nothing was written`)
+      const before = parsed.settings ?? {}
+      let after: Record<string, unknown>
+      try {
+        after = adjustHidden(before, project.home, true, userHome())
+      } catch (error) {
+        throw new Error(`Cannot forget ${name}: ${path}: ${reason(error)}. Nothing was written`)
+      }
+      // `adjustHidden` returns the same object when the home is already hidden: nothing is rewritten for
+      // nothing, and forgetting twice keeps a single entry.
+      if (after !== before) await writeSettings(path, after)
+    })
+    return { hidden: true, project: toRow(project) }
   },
 }
 
 /**
- * The actions only a click may take: stopping a host, creating one, and turning this machine's splash
- * animation on or off. An agent calling the extension cannot do them behind the screen — which is also
- * what makes the confirmation of `stop` mean something, since `confirm: true` from an agent is not a
- * person saying yes. `list`, `measure`, `state` and `start` stay open: the rail, the phone and another
- * project's window read them, and a host that is down is brought up by whoever needs it.
+ * The actions only a click may take: stopping a host, creating one, hiding one from the rail, and turning
+ * this machine's splash animation on or off. An agent calling the extension cannot do them behind the
+ * screen — which is also what makes the confirmation of `stop` mean something, since `confirm: true` from
+ * an agent is not a person saying yes. `list`, `measure`, `state` and `start` stay open: the rail, the
+ * phone and another project's window read them, and a host that is down is brought up by whoever needs
+ * it.
  */
-export const userActions = ['stop', 'create', 'splash']
+export const userActions = ['stop', 'create', 'splash', 'forget']

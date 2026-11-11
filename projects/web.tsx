@@ -13,9 +13,10 @@
  * The panel opens on hover and on focus — after a short delay, so crossing the left edge of the window does
  * not open it, and it closes when anything scrolls, because it is anchored where it opened —, and it is
  * what says what the tile cannot fit: `running` / `stopped`, the port, the path, the home the actions
- * address, and `1 working · 1 question` **measured when the panel opens**, with the time. Stopping and
- * copying the command live in it — outside the link, because a `<button>` inside an `<a>` is invalid HTML.
- * A stopped project shows no measurement; a host that does not answer shows `unavailable` with the reason,
+ * address, and `1 working · 1 question` **measured when the panel opens**, with the time. Stopping,
+ * copying the command and hiding a stopped project from the rail (`forget…`, with the way back in the
+ * question) live in it — outside the link, because a `<button>` inside an `<a>` is invalid HTML. A
+ * stopped project shows no measurement; a host that does not answer shows `unavailable` with the reason,
  * never `0`.
  *
  * The `+` opens a new project's dialog: a path (`~/src/my-project`), validated and brought up as `start`
@@ -38,6 +39,7 @@ import {
   CheckIcon,
   ChevronRightIcon,
   CopyIcon,
+  EyeOffIcon,
   LoaderCircleIcon,
   PlayIcon,
   PlusIcon,
@@ -89,6 +91,7 @@ import type {
   Measurement,
   Project,
   CreateResult,
+  ForgetResult,
   StopResult,
   Section,
   Splash,
@@ -108,6 +111,9 @@ const StopAction = actionRef<{ name: string; confirm?: boolean }, StopResult>(
   'projects',
   'stop',
 )
+
+/** `{ name }` → hides that project from this rail: its home enters the machine's `projects.hidden`. */
+const ForgetAction = actionRef<{ name: string }, ForgetResult>('projects', 'forget')
 
 /** `{ path }` → brings a folder's host up (or selects the project that is already that folder). */
 const CreateAction = actionRef<{ path: string }, CreateResult>('projects', 'create')
@@ -185,7 +191,7 @@ function Column() {
       setMeasurements(readingWave(full))
       setFailed(undefined)
     } catch (cause) {
-      // The rail keeps what it already knew — and the ⟳ says the reading failed and each tile's `title`
+      // The rail keeps what it already knew — and the ⟳ says the refresh failed and each tile's `title`
       // says when it is from.
       setFailed(errorMessage(cause))
     } finally {
@@ -273,7 +279,7 @@ function Column() {
           </>
         ) : (
           <button
-            aria-label="The projects could not be read. Measure again"
+            aria-label="The projects could not be read — refresh"
             className="flex size-8 items-center justify-center rounded-md border border-error/40 font-mono text-[11px] text-error outline-none hover:bg-error/10 focus-visible:ring-1 focus-visible:ring-ring"
             onClick={() => void refresh()}
             title={error?.message}
@@ -287,14 +293,10 @@ function Column() {
         <Icon
           className={cn('size-6', (loading || measuring) && 'pointer-events-none')}
           label={
-            stale ? `The last reading failed (${stale}). Measure again` : 'Measure the projects again'
+            stale ? `The last refresh failed (${stale}). Try again` : 'Refresh the projects'
           }
           onClick={() => void refresh()}
-          title={
-            shown
-              ? `${stale ? `the last reading failed (${stale}) · ` : ''}measured at ${formatTime(shown.at)} · measure again`
-              : 'Measure again'
-          }
+          title={stale ? `The last refresh failed (${stale}) — try again` : 'Refresh the projects'}
         >
           <RotateCwIcon
             className={cn(
@@ -406,8 +408,10 @@ function Tile({
   const { copied, copy } = useCopy()
   const [panelOpen, setPanelOpen] = useState(false)
   const [anchor, setAnchor] = useState<CSSProperties>()
-  const [pending, setPending] = useState<'start' | 'stop'>()
+  const [pending, setPending] = useState<'start' | 'stop' | 'forget'>()
   const [confirm, setConfirm] = useState<{ pid: number; url?: string }>()
+  /** The question is on screen: `forget` is the only action of the panel that removes a tile. */
+  const [forgetAsk, setForgetAsk] = useState(false)
   const [error, setError] = useState<string>()
   const [measuring, setMeasuring] = useState(false)
   const frame = useRef<HTMLDivElement>(null)
@@ -435,6 +439,7 @@ function Tile({
   useEffect(() => {
     setError(undefined)
     setConfirm(undefined)
+    setForgetAsk(false)
   }, [running])
 
   // The measurement is of the instant the panel opens — and the panel says when it is from. Closed, nothing
@@ -504,6 +509,7 @@ function Tile({
     clearTimeout(exit.current)
     setPanelOpen(false)
     setConfirm(undefined)
+    setForgetAsk(false)
   }
 
   // The panel is anchored where it opened: a scroll (of the rail or of anything behind it) would leave tile
@@ -558,6 +564,25 @@ function Tile({
           pid: result.pid,
           ...(result.url ? { url: result.url } : {}),
         })
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setPending(undefined)
+    }
+  }
+
+  /**
+   * Hides the project from this rail: the rail reads the list again, and the tile leaves with it. If it
+   * refuses (this window, a file it cannot rewrite), the reason stays in the panel and the tile stays
+   * where it is — nothing was written.
+   */
+  const forgetTile = async () => {
+    setError(undefined)
+    setPending('forget')
+    try {
+      await api.action(ForgetAction, { name: project.name })
+      setForgetAsk(false)
+      await onChanged()
     } catch (cause) {
       setError(errorMessage(cause))
     } finally {
@@ -721,7 +746,51 @@ function Tile({
                   stop
                 </Button>
               )}
+              {/* Stopped and not this window: a project that is up is stopped first, and the window that
+                  serves the screen never hides itself. */}
+              {!running && !project.current && (
+                <Button
+                  className="h-6 gap-1 px-1.5 text-[11px] text-muted-foreground"
+                  disabled={pending === 'forget'}
+                  onClick={() => setForgetAsk(true)}
+                  size="xs"
+                  title="Hide it from this rail — its conversations stay where they are"
+                  type="button"
+                  variant="ghost"
+                >
+                  <EyeOffIcon className="size-3" />
+                  forget…
+                </Button>
+              )}
             </div>
+            {forgetAsk && (
+              <div className="flex flex-col gap-1 rounded-md bg-muted/50 p-2" data-forget={project.name}>
+                <p className="leading-relaxed text-muted-foreground">
+                  Hide {project.name} from this rail? The project's conversations stay where they
+                  are — nothing is deleted.
+                </p>
+                <p className="text-[10px] leading-relaxed break-words text-muted-foreground/60">
+                  back: remove its home from projects.hidden in ~/.ultimate/settings.json
+                </p>
+                <div className="flex items-center gap-2 font-mono text-[10px]">
+                  <button
+                    className="cursor-pointer text-error outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring"
+                    disabled={pending === 'forget'}
+                    onClick={() => void forgetTile()}
+                    type="button"
+                  >
+                    {pending === 'forget' ? 'forgetting…' : 'forget it'}
+                  </button>
+                  <button
+                    className="cursor-pointer text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+                    onClick={() => setForgetAsk(false)}
+                    type="button"
+                  >
+                    keep it
+                  </button>
+                </div>
+              </div>
+            )}
             {confirm && (
               <div className="flex flex-col gap-1 rounded-md bg-muted/50 p-2">
                 <p className="leading-relaxed text-muted-foreground">
@@ -932,7 +1001,9 @@ function NewProject({
               <p className="text-[12px] leading-relaxed text-muted-foreground">
                 {outcome.created
                   ? 'Its first run — onboarding and the trust decision for that folder — happens in its own window. The tile is in the rail.'
-                  : 'No second host was started for that folder.'}
+                  : outcome.unhidden
+                    ? 'It was hidden from this rail: asking for it again brought it back. No second host was started for that folder.'
+                    : 'No second host was started for that folder.'}
               </p>
             </div>
             <div className="flex items-center justify-end gap-2">
@@ -1042,10 +1113,10 @@ function PhoneList() {
           </span>
         )}
         <button
-          aria-label="Measure the projects again"
+          aria-label="Refresh the projects"
           className="ml-auto flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
           onClick={() => void refresh()}
-          title={data ? `Measured at ${formatTime(data.at)} · measure again` : 'Measure again'}
+          title="Refresh the projects"
           type="button"
         >
           <RotateCwIcon className={cn('size-3', loading && 'animate-spin')} />
