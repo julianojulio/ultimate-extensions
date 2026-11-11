@@ -4,7 +4,8 @@
 # changes nothing; a new extension here is installed by one more line on the next run.
 #
 # The Ultimate clone comes from $ULTIMATE_ROOT, and by default from ~/src/ultimate: it is where the
-# @earendil-works/* packages that each extension's tests need come from.
+# @earendil-works/* packages each extension imports resolve from, inside Ultimate. The tests also run
+# without it, on their own fixtures.
 set -eu
 
 # The physical path, even when this is reached through a symlink (`~/src/ultimate-extensions` pointing
@@ -56,7 +57,7 @@ for path in "$repo"/*/; do
   fi
 
   if [ ! -d "$modules" ]; then
-    echo "note  $name: without $modules — the tests do not resolve @earendil-works/*. Point ULTIMATE_ROOT at the clone" >&2
+    echo "note  $name: without $modules — this extension cannot load inside Ultimate. Point ULTIMATE_ROOT at the clone" >&2
   elif [ -L "$repo/$name/node_modules" ]; then
     # A link to another place is remade; a real node_modules (installed by hand) stays as it is.
     [ "$(readlink "$repo/$name/node_modules")" = "$modules" ] || ln -sfn "$modules" "$repo/$name/node_modules"
