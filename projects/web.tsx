@@ -19,7 +19,8 @@
  * never `0`.
  *
  * The `+` opens a new project's dialog: a path (`~/src/my-project`), validated and brought up as `start`
- * brings one up — first free port, detached, without a window, health in 20 s. From there the project is
+ * brings one up — the port the host takes, detached, without a window, the lock and then health in 20 s.
+ * From there the project is
  * its own: the first run, the onboarding and the trust decision for that folder happen in its window.
  *
  * On the phone there is no rail (there is no width for one): the sidebar's compact list — the one from

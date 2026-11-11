@@ -12,12 +12,14 @@
  * - the count and the question counter come from a measured number: not measured is not `0`, it is
  *   `unavailable` — the invented zero is the worst possible error, because it makes one ignore the
  *   stuck project;
- * - the host comes up on the first free port from 4747, without opening a window;
+ * - the host comes up without a window and without a port chosen here — on the first free port from
+ *   4747 that the program takes itself;
  * - the stop button kills only what it started itself; the rest asks for confirmation, and a dead-pid
  *   lock is not a host (there is nothing to stop, and the click brings it up);
  * - the command copied is the command that runs (`ultimate <path>`), with quotes when the path asks
  *   for them — and it is never run by this extension;
- * - the dot of the tile comes from the app's scheme: it pulses when working, green idle, grey stopped —
+ * - the dot of the tile comes from the app's scheme: it pulses when working **and the reading is new
+ *   enough**, is brand without pulsing when it is old, green idle, grey stopped —
  *   and a host that did not answer does not become idle;
  * - the question number is the one in the tile's corner (`1`..`9`, `9+`), and zero draws nothing;
  * - the tile's sentence says state, counts and the time of the measurement: the indicator ages, but
