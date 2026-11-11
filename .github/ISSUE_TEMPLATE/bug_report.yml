@@ -1,0 +1,53 @@
+name: Bug report
+description: An extension does not do what its README says.
+labels: [bug]
+body:
+  - type: dropdown
+    id: extension
+    attributes:
+      label: Which extension
+      options:
+        - projects
+        - rate-limiter
+        - install.sh, or the link to ~/.ultimate/extensions
+        - another one
+    validations:
+      required: true
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened
+      description: What you saw. The exact notice, error or line from the log helps more than a summary.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: What the README or the extension's own message says should happen.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The steps, from a fresh Ultimate start when you can.
+      placeholder: |
+        1. …
+        2. …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Ultimate version, commit, system and Node version
+      description: The commit you run (`git log -1` in this repository), your OS, and `node --version`.
+    validations:
+      required: true
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Drag them in. For the rail, the whole window, so the tile can be seen where it sits.
+    validations:
+      required: false

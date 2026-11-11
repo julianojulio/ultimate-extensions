@@ -2,8 +2,8 @@
 # Setup for a new worktree of this repository: there is no node_modules here.
 #
 # Each extension's node_modules is a symlink to the Ultimate clone's (`install.sh` creates it in the
-# main checkout, and .gitignore keeps it out of git). A new checkout has no such link, and
-# `node --test` does not resolve `@earendil-works/*` until it exists. This script remakes the link for
+# main checkout, and .gitignore keeps it out of git). A new checkout has no such link, and nothing in
+# it imports `@earendil-works/*` until it exists. This script remakes the link for
 # each extension folder **of this checkout** — what needs a link is decided here, and the source
 # checkout only says where the modules are, so a folder renamed in the branch being set up (or in the
 # source, which is one landing behind) does not stop it.

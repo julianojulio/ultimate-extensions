@@ -1,0 +1,27 @@
+# The tests of every extension, on the Node version they run on: Ultimate requires Node 26.
+name: checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+      # No install step: a clean clone runs the whole suite, and that is what this proves.
+      - name: tests
+        run: node --test $(find . -name '*.test.ts' -not -path '*/node_modules/*')

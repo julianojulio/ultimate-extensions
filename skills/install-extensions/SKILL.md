@@ -112,7 +112,7 @@ sh ~/src/ultimate-extensions/install.sh
 
 It needs no arguments and is idempotent: for each extension folder it links `~/.ultimate/extensions/<name>` to
 the folder here, and links the folder's `node_modules` at the Ultimate clone's (`$ULTIMATE_ROOT`, by default
-`~/src/ultimate`), which is where the tests resolve `@earendil-works/*` from. It **refuses a real folder** at
+`~/src/ultimate`), which is where the extension's imports of `@earendil-works/*` resolve from. It **refuses a real folder** at
 `~/.ultimate/extensions/<name>` — if it skips a name, stop and tell the user that something else lives there.
 
 **`rate-limiter`: installing it is not enough.** Its own map is empty on purpose, so nothing is limited until

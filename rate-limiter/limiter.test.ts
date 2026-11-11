@@ -4,14 +4,15 @@
  * provider here must be reported once per distinct set of names.
  *
  * The host is a fake and the settings live in a temporary home, so nothing here touches the
- * machine's providers or its own settings file.
+ * machine's providers or its own settings file. The stream comes from `host-doubles.ts`, so a clean
+ * clone with no `node_modules` runs the same tests as the machine.
  */
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { registerHooks } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { createAssistantMessageEventStream } from '@earendil-works/pi-ai'
 import type {
   Api,
   AssistantMessage,
@@ -19,9 +20,33 @@ import type {
   Model,
   TranscriptContext,
 } from '@earendil-works/pi-ai'
+import { createAssistantMessageEventStream } from './host-doubles.ts'
 import { LIMITS, ProviderLimiter, resolveLimits } from './limiter.ts'
-import rateLimiter, { actions, install, limited } from './server.ts'
 import type { Host, Stream } from './server.ts'
+
+// `server.ts` imports two of the host's packages as values, and a checkout has no `node_modules` until
+// `install.sh` links it. Where they do not resolve they are answered from the local double, so this
+// file loads in a clean clone; where they do, the machine's own packages are used.
+const hostPackages = new Set(['@earendil-works/pi-ai', '@earendil-works/pi-durable'])
+const doubles = new URL('./host-doubles.ts', import.meta.url).href
+registerHooks({
+  resolve(specifier, context, nextResolve) {
+    if (!hostPackages.has(specifier)) return nextResolve(specifier, context)
+    try {
+      return nextResolve(specifier, context)
+    } catch (error) {
+      // Only a package that is not installed is answered here; anything else is the machine's problem.
+      if ((error as { code?: string }).code !== 'ERR_MODULE_NOT_FOUND') throw error
+      return { url: doubles, shortCircuit: true }
+    }
+  },
+})
+
+// Imported after the hook, and after this file's static imports have resolved: a static import of
+// `server.ts` would fail on a clean clone before the hook existed.
+const server = await import('./server.ts')
+const rateLimiter = server.default
+const { actions, install, limited } = server
 
 const tick = () => new Promise((resolve) => setImmediate(resolve))
 

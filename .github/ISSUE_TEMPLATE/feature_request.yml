@@ -1,0 +1,36 @@
+name: Feature request
+description: A problem an extension does not solve today.
+labels: [enhancement]
+body:
+  - type: dropdown
+    id: extension
+    attributes:
+      label: Which extension
+      options:
+        - projects
+        - rate-limiter
+        - a new extension
+        - another one
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What it does not solve today
+      description: The situation you are in, and where the extension leaves you. What you do instead today.
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: How you would check it works
+      description: The test, the measurement or the screenshot that would show it does — and the case that would show it does not.
+    validations:
+      required: true
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: What it must not do
+      description: "Optional, and useful: every extension here explains itself by what it leaves out."
+    validations:
+      required: false
