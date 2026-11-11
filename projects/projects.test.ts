@@ -49,6 +49,7 @@ import {
   questions,
   canStop,
   portOf,
+  fresh,
   homeLabel,
   hostOrigin,
   lockPort,
@@ -61,6 +62,7 @@ import {
   hasMeasurement,
   questionsTitle,
   tileTitle,
+  WAVE_INTERVAL,
 } from './projects.ts'
 import type { Target } from './projects.ts'
 import type { Measurement, Project, Section } from './types.ts'
@@ -361,25 +363,50 @@ const measurement = (
 })
 
 test('the dot of the tile: pulses working, green idle, grey stopped, hollow without an answer', () => {
+  // The reading's own time is the reference: an indicator that ages is acceptable, one that lies is not.
+  const now = Date.parse('2026-11-10T03:22:43.079Z')
   // Working: it is the app's mark class (`animate-pulse-dot bg-brand`), not a colour invented here.
-  assert.equal(presence(running(2), measurement(2, 0)), 'working')
+  assert.equal(presence(running(2), measurement(2, 0), now), 'working')
   // Zero is a measurement: nothing working is idle for real.
-  assert.equal(presence(running(0), measurement(0, 0)), 'idle')
+  assert.equal(presence(running(0), measurement(0, 0), now), 'idle')
   // Stopped has nothing to measure — and a leftover measurement does not invent a host that is up.
-  assert.equal(presence(stopped, measurement(3, 1)), 'stopped')
-  assert.equal(presence(stopped, undefined), 'stopped')
+  assert.equal(presence(stopped, measurement(3, 1), now), 'stopped')
+  assert.equal(presence(stopped, undefined, now), 'stopped')
   // Up and with no reading yet (the wave did not come back): nothing is asserted.
-  assert.equal(presence(running(1), undefined), 'unavailable')
+  assert.equal(presence(running(1), undefined, now), 'unavailable')
   // The host that is up and did not answer **is not idle**: it is `unavailable`, with the reason at
   // hand.
   assert.equal(
-    presence(running(null), measurement(null, null, { reason: 'no answer in 3s' })),
+    presence(running(null), measurement(null, null, { reason: 'no answer in 3s' }), now),
     'unavailable',
   )
   // It works even with a question open: both fit in the tile (the pulse and the number in amber).
-  assert.equal(presence(running(1), measurement(1, 2)), 'working')
+  assert.equal(presence(running(1), measurement(1, 2), now), 'working')
   // A malformed number does not become work.
-  assert.equal(presence(running(Number.NaN), measurement(Number.NaN, 0)), 'idle')
+  assert.equal(presence(running(Number.NaN), measurement(Number.NaN, 0), now), 'idle')
+})
+
+test('the pulse ages: working only while the reading is newer than the wave', () => {
+  const at = '2026-11-10T03:22:43.079Z'
+  const now = Date.parse(at)
+  const reading = measurement(2, 0, { at })
+  // Just read: it pulses, it is happening now.
+  assert.equal(presence(running(2), reading, now), 'working')
+  // One millisecond before the wave's ceiling: still now.
+  assert.equal(presence(running(2), reading, now + WAVE_INTERVAL - 1), 'working')
+  // **At** the ceiling and older than it: the dot keeps the working colour and stops pulsing — the
+  // pixel no longer claims what it cannot know.
+  assert.equal(presence(running(2), reading, now + WAVE_INTERVAL), 'stale')
+  assert.equal(presence(running(2), reading, now + 60 * 60_000), 'stale')
+  // Idle and stopped have nothing to age: a still dot is a still dot.
+  assert.equal(presence(running(0), measurement(0, 0, { at }), now + 60 * 60_000), 'idle')
+  // A reading whose time cannot be parsed is not "now".
+  assert.equal(presence(running(2), measurement(2, 0, { at: 'yesterday' }), now), 'stale')
+  // A clock that is behind (a reading from the future) is not fire-and-forget: it is a fresh reading.
+  assert.equal(fresh(at, now - 5000), true)
+  assert.equal(fresh(at, now + WAVE_INTERVAL), false)
+  assert.equal(fresh(undefined, now), false)
+  assert.equal(WAVE_INTERVAL, 15_000)
 })
 
 test('the question number fits in the corner of the tile: 1..9, 9+ above, and nothing at zero', () => {

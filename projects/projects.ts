@@ -14,6 +14,13 @@ import { basename, isAbsolute, join, resolve } from 'node:path'
 import type { Measurement, Project, Section } from './types.ts'
 
 /**
+ * How old a reading may be and still move the rail: the wave's ceiling, and the age at which the pulse
+ * stops. A pulse is the app's word for "happening now" (`animate-pulse-dot`); a reading older than
+ * this is a fact about the past, and its dot is a still brand dot.
+ */
+export const WAVE_INTERVAL = 15_000
+
+/**
  * The state of the host, in a word: the panel says `running` or `stopped`, because it does not fit in a
  * 32px tile.
  */
@@ -289,19 +296,37 @@ export function stopDecision(
  * pulsing), up and idle (green), stopped (grey). A host that is up and **did not answer** is not idle:
  * it stays without a pulse and the tile says `unavailable` — the silence of a stuck host is not calm.
  */
-export type Presence = 'working' | 'idle' | 'stopped' | 'unavailable'
+export type Presence = 'working' | 'stale' | 'idle' | 'stopped' | 'unavailable'
+
+/**
+ * Is this reading new enough to move? A pulse says "now", so a reading older than the wave's ceiling is
+ * not: `presence` turns it into `stale` and the dot keeps the working colour without the animation. A
+ * reading whose time does not parse is not fresh either — an unknowable age is not "now".
+ */
+export function fresh(at: string | undefined, now: number): boolean {
+  if (!at) return false
+  const time = Date.parse(at)
+  return Number.isFinite(time) && now - time < WAVE_INTERVAL
+}
 
 /**
  * The dot of a tile, from the project and its last measurement: stopped has nothing to measure, and a
  * measurement that did not come (`null` on both, with a reason) is `unavailable`, never `idle`. A
- * measurement with zero is a measurement: `0 working` is idle for real.
+ * measurement with zero is a measurement: `0 working` is idle for real. Working **and** measured within
+ * the wave is `working` (pulsing); working and older than that is `stale` (brand, still): the pixel does
+ * not claim what it cannot know, and the `title` says when the reading is from.
  */
-export function presence(project: Project, measurement: Measurement | undefined): Presence {
+export function presence(
+  project: Project,
+  measurement: Measurement | undefined,
+  now = Date.now(),
+): Presence {
   if (project.running === undefined) return 'stopped'
   // Up and with no reading yet (the wave did not come back, or the host has just come up): there is
   // nothing to assert.
   if (!measurement || !hasMeasurement(measurement.working, measurement.openQuestions)) return 'unavailable'
-  return (measured(measurement.working) ?? 0) > 0 ? 'working' : 'idle'
+  if ((measured(measurement.working) ?? 0) === 0) return 'idle'
+  return fresh(measurement.at, now) ? 'working' : 'stale'
 }
 
 /**

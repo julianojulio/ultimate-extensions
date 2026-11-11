@@ -27,8 +27,11 @@
  * and on the desktop it ceases to exist so that there are not two.
  *
  * No poll: the rail reads on opening, makes a wave of full reads on entering with the pointer (at most
- * once every 15 s), and again on the refresh button and after each action — one call per reading, the
- * rows and the numbers together. Every tile's `title` says when its dot and count are from.
+ * once every 15 s), when the window regains the focus (the same ceiling), and again on the refresh button
+ * and after each action — one call per reading, the rows and the numbers together. The dot of *this*
+ * window's project does not depend on any of that: its work comes from the conversation list the client
+ * already streams, so it is live. Every tile's `title` says when its dot and count are from, and a reading
+ * older than the wave stops the pulse instead of pretending to be now.
  */
 import {
   CheckIcon,
@@ -56,6 +59,8 @@ import {
   formatTime,
   useAction,
   useCopy,
+  useNow,
+  useStore,
   useViewport,
 } from '@/sdk'
 import {
@@ -76,6 +81,7 @@ import {
   hasMeasurement,
   questionsTitle,
   tileTitle,
+  WAVE_INTERVAL,
 } from './projects.ts'
 import type { Presence } from './projects.ts'
 import type {
@@ -108,8 +114,9 @@ const CreateAction = actionRef<{ path: string }, CreateResult>('projects', 'crea
 /** `{ enabled }` → turns the splash animation on or off in this machine's settings. */
 const SplashAction = actionRef<{ enabled: boolean }, Splash>('projects', 'splash')
 
-/** How often passing the pointer over the rail may redo the reading of who is up. */
-const WAVE_INTERVAL = 15_000
+/** How often the local reading of this window's own project is refreshed, so its dot keeps moving while
+ * it works (the numbers come from this host, not from a request). */
+const LOCAL_INTERVAL = 5000
 
 /** How long the pointer or the focus has to rest on a tile before its panel opens: crossing the left edge
  * of the window must not open a panel of 240px over the conversation. */
@@ -159,6 +166,11 @@ function Column() {
   const [measuring, setMeasuring] = useState(false)
   const [failed, setFailed] = useState<string>()
   const last = useRef(0)
+  // This host's own work, from the conversation list it already streams: no request, and it changes the
+  // moment a conversation starts or stops. The dot of this window's project is therefore never old.
+  const workingHere = useStore((state) => state.conversations.filter((item) => item.busy).length)
+  // Its time is refreshed with it, so the dot keeps pulsing while this host works (see `presence`).
+  const now = useNow(LOCAL_INTERVAL)
 
   const readWave = useCallback(async (force = false) => {
     if (!force && Date.now() - last.current < WAVE_INTERVAL) return
@@ -184,6 +196,21 @@ function Column() {
     void readWave()
   }, [readWave])
 
+  // Coming back to the window is exactly when the rail is looked at: the wave again, with the same ceiling
+  // (inside it, `readWave` does nothing). While the window is hidden nothing is asked.
+  useEffect(() => {
+    const onFocus = () => void readWave()
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') void readWave()
+    }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [readWave])
+
   // The measurement a tile's panel made also holds for that tile on the rail, without another reading.
   const storeMeasurement = useCallback((name: string, measurement: Measurement) => {
     setMeasurements((before) => ({ ...before, [name]: measurement }))
@@ -193,6 +220,17 @@ function Column() {
   const refresh = () => readWave(true)
   const shown = section ?? data
   const { running, stopped } = groups(shown?.projects ?? [])
+  // This window's project answers from the host that is serving the screen: its dot is live and its
+  // numbers are now, whether or not a wave ever came back.
+  const measurementOf = (project: Project): Measurement | undefined => {
+    const wave = measurements[project.name]
+    if (!project.current) return wave
+    return {
+      working: workingHere,
+      openQuestions: wave?.openQuestions ?? null,
+      at: new Date(now).toISOString(),
+    }
+  }
   const stale = failed ?? (shown ? undefined : error ? error.message : undefined)
   return (
     <nav
@@ -211,7 +249,8 @@ function Column() {
             {running.map((project) => (
               <Tile
                 key={project.home ?? project.root}
-                measurement={measurements[project.name]}
+                measurement={measurementOf(project)}
+                now={now}
                 onChanged={refresh}
                 onMeasured={storeMeasurement}
                 project={project}
@@ -223,7 +262,8 @@ function Column() {
             {stopped.map((project) => (
               <Tile
                 key={project.home ?? project.root}
-                measurement={measurements[project.name]}
+                measurement={measurementOf(project)}
+                now={now}
                 onChanged={refresh}
                 onMeasured={storeMeasurement}
                 project={project}
@@ -350,12 +390,15 @@ function SplashButton({
 function Tile({
   project,
   measurement,
+  now,
   onChanged,
   onMeasured,
 }: {
   project: Project
   /** The last measurement of the rail's wave, or the one this tile's panel made (the panel's wins). */
   measurement?: Measurement
+  /** The clock the pulse is judged against: a reading older than the wave does not pulse. */
+  now: number
   onChanged: () => Promise<unknown>
   onMeasured: (name: string, measurement: Measurement) => void
 }) {
@@ -381,7 +424,7 @@ function Tile({
   const link = linkOf(project)
   const state =
     pending === 'start' ? 'starting' : pending === 'stop' ? 'stopping' : stateWord(project)
-  const dot = presence(project, measurement)
+  const dot = presence(project, measurement, now)
   const questionBadge = questionCount(measurement?.openQuestions)
   const time = measurement ? formatTime(measurement.at) : undefined
   const buttonTitle = tileTitle(project, measurement, time)
@@ -716,9 +759,10 @@ function Tile({
 
 /**
  * The two indicators in the tile's corner, with the semantics and the classes of the app's mark
- * (`AgentMark`): the presence dot — pulsing while it works, green up and idle, grey stopped, hollow when the
- * host did not answer — and, when there is a question without an answer, the number in amber in the top
- * corner. The whole sentence is in the tile's `title`/`aria-label`; here nothing is read by a screen reader.
+ * (`AgentMark`): the presence dot — pulsing while it works, brand **still** when the last reading that said
+ * "working" is older than the wave, green up and idle, grey stopped, hollow when the host did not answer —
+ * and, when there is a question without an answer, the number in amber in the top corner. The whole
+ * sentence is in the tile's `title`/`aria-label`; here nothing is read by a screen reader.
  */
 function Signals({ dot, questionBadge }: { dot: Presence; questionBadge: string | undefined }) {
   return (
@@ -728,6 +772,9 @@ function Signals({ dot, questionBadge }: { dot: Presence; questionBadge: string 
         className={cn(
           'absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full ring-[1.5px] ring-sidebar',
           dot === 'working' && 'animate-pulse-dot bg-brand',
+          // Was working when it was measured, and that is longer ago than the wave: the same colour, no
+          // pulse — the pixel does not claim "now".
+          dot === 'stale' && 'bg-brand',
           dot === 'idle' && 'bg-success',
           dot === 'stopped' && 'bg-muted-foreground/60',
           // Not answering is not idle: the dot stays hollow, without pulse and without working colour.

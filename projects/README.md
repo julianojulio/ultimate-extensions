@@ -4,8 +4,9 @@ project and it opens in this tab; tap a stopped one and the host comes up; and t
 the tile cannot fit: the port, the state in words, how many conversations of that project are working
 and how many questions wait for an answer, measured at the moment the panel opens.
 
-Every tile carries the app's **presence dot**: grey stopped, green idle, pulsing while it works, and
-the number in amber when a question has no answer. At the bottom of the rail sit the ⟳ (measure
+Every tile carries the app's **presence dot**: grey stopped, green idle, pulsing while it works, brand
+**still** when the reading that said "working" is older than the wave, and the number in amber when a
+question has no answer. At the bottom of the rail sit the ⟳ (measure
 again), the `+` (create a project) and the switch of the **splash animation** — which writes only the
 `splash` entry of this machine's settings.
 
@@ -24,6 +25,7 @@ memory); inside a frame Ultimate does not draw the rail and the extension does n
 ┌──┐
 │AE●│  ← this window: text-brand, green dot (idle), and the click only opens the panel
 │GL◉│  ← running and working: the dot pulses (brand); the ① in the top corner is a question
+│RO◉│  ← running and working, measured longer ago than the wave: brand, still
 │RO●│  ← running and idle: green dot
 │SA○│  ← running and not answering: hollow dot, no pulse and no amber
 │──│  ← a thin line separates the running ones from the stopped ones
@@ -74,17 +76,20 @@ are its own, because the rail is not a conversation:
 | amber | the conversation is **waiting** for you | the **number** of open questions, in the corner |
 | grey | idle | stopped: there is no host |
 | green | — | up and idle (`0 working` measured) |
-| brand, pulsing | the agent is working | a conversation of that project is working |
+| brand, pulsing | the agent is working | a conversation of that project is working **now** |
+| brand, still | — | it was working when it was measured, and that is longer ago than the wave |
 
 Why they differ: a project has two things a conversation does not — **being up at all** (the grey and
 the green) and **someone else's questions** (the amber number, which is the same amber the questions
-carry elsewhere, in its counting role, not as "waiting").
+carry elsewhere, in its counting role, not as "waiting"). The one rule both keep is the important one:
+**a pulse means now**, never "it was working once".
 
 | What you see | When |
 | --- | --- |
 | **grey** dot (`muted-foreground/60`) | the project is stopped; the tile is also dimmer |
 | **green** dot (`success`) | running and idle: `0 working` measured |
-| **pulsing** dot (`animate-pulse-dot bg-brand`) | running and with a conversation working now |
+| **pulsing** dot (`animate-pulse-dot bg-brand`) | running and with a conversation working now, from a reading newer than the wave (15 s) |
+| **brand** dot, no pulse | running, the last reading said it was working, and that reading is **older** than the wave: the colour is the fact, the animation would be a lie |
 | **hollow** dot (only the ring) | running and **not answering** within 3 s: the tile says `unavailable`, with the reason |
 | **amber number** in the top corner | there is a question without an answer; `1`..`9`, and `9+` from ten up. At zero it does not appear |
 
@@ -104,13 +109,18 @@ carry elsewhere, in its counting role, not as "waiting").
   `gta2xlwifi-lineage — running · 2 working · 1 unanswered question · measured at 21:53 — open it in this tab`. An
   indicator that ages is acceptable; one that lies is not — which is why it carries when it is from.
 - **When it measures:** on mounting the rail, on entering the rail with the pointer (**at most once
-  every 15 s**), on `⟳`, and after every action that changes the machine (`start`, `stop`, `create`).
-  One call per reading: the rows and the numbers come together.
+  every 15 s**), **when the window regains the focus** or becomes visible again (same ceiling: coming
+  back to the window is exactly when the rail is looked at), on `⟳`, and after every action that changes
+  the machine (`start`, `stop`, `create`). One call per reading: the rows and the numbers come together.
   The panel keeps measuring when it opens, and its measurement holds for that tile — it wins
   over the wave's.
+- **The pulse ages.** A reading older than the wave stops the pulse and keeps the brand colour (see the
+  table above): the `title` already says when it is from, and the pixel no longer says "now".
+- **This window's own dot never ages**: its work comes from the conversation list the client already
+  streams (`busy`), with no request at all, and it changes the moment a conversation starts or stops.
 - **There is no timer reading the machine.** The wave is the full `list` action (each running host's
   `state`, in parallel, with the 3 s deadline that already existed): a snapshot, with a time, not a
-  clock.
+  clock. What ticks is the age of this window's own local reading, which asks nobody anything.
 
 ## The tile panel
 
@@ -282,7 +292,7 @@ is a URL for `evil.com`. What does not pass reaches neither a `fetch` nor a link
 The rail opens with `list({ measure: false })`: the cheap read, without a trip to another host, which
 only says who is up (it is what paints the tiles first). The **wave** is the full `list()`, and it is
 what lights the dot and the number: it goes out on mounting the rail, on entering the rail with the
-pointer (at most once every 15 s), on `⟳` and after
+pointer (at most once every 15 s), when the window regains the focus (same ceiling), on `⟳` and after
 every action that changes the machine. It **is** the read of the rows as well: one call, not one for the
 list and another for the numbers. Each row carries its own `measuredAt`, so a host that took 3 s to
 answer does not make the others claim a reading 3 s older than theirs. `list()` with no argument keeps
@@ -335,7 +345,8 @@ and of the machine's `settings.json`, only the `splash` entry of `extensions.dis
 
 Opening the window reads once; switching the conversation shown is another read (the SDK indexes an
 action's read by the conversation it is made in); the presence **wave** goes out on mount, on entering
-the rail with the pointer (at most once every 15 s), on the refresh button (the bottom of the rail's
+the rail with the pointer (at most once every 15 s), **when the window regains the focus or becomes
+visible** (same ceiling), on the refresh button (the bottom of the rail's
 `⟳`, whose `title` says the time of the last read and turns red when that read failed) and after every
 action that changes the machine. A failed read does not empty the rail: the tiles stay with their ages.
 There is no periodic timer, and no event subscription from another host: **an indicator that ages is
