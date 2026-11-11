@@ -15,8 +15,8 @@ say what changed.
 ## 1. The repository
 
 The default clone is `~/src/ultimate-extensions`. If it is there, work in it; if it is not, clone it there
-(`julianojulio/ultimate-extensions` — **private today**, so the user needs access) and say where it went.
-Everything below runs from the repository.
+(`julianojulio/ultimate-extensions`; if you cannot reach the repository, ask the user for access) and say
+where it went. Everything below runs from the repository.
 
 Never edit the Ultimate clone's `server/` or `shared/`, and never restart Ultimate: these extensions are
 discovered through `~/.ultimate/extensions/` and reload by themselves.

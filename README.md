@@ -1,181 +1,40 @@
 # ultimate-extensions
 
-The **machine** extensions of [Ultimate](https://github.com/HazAT/ultimate): they live in
-`~/.ultimate/extensions/` and apply to **all** projects on this machine.
+Extensions for [Ultimate](https://github.com/HazAT/ultimate).
 
-## What a machine extension is
+## `projects` — a rail of projects
 
-Ultimate discovers extensions in three layers:
+A column on the left edge of the window with one tile per project: running hosts on top, stopped
+ones below, each with a presence dot and the number of unanswered questions. Click a tile to switch to
+that project in this tab, or to bring a stopped one up. Details in [`projects/`](projects/).
 
-| Layer | Where | Applies to |
-| --- | --- | --- |
-| `builtin` | `extensions/` of the Ultimate clone | everything, and it belongs to the machine |
-| `project` | `<project>/.ultimate/extensions/` | that project |
-| `user` | `~/.ultimate/extensions/` | **all projects on this machine** |
+## `rate-limiter` — a ceiling on simultaneous requests per provider
 
-This repository is what sits in the third row: the extensions that belong to no product project but
-change how the machine works — how many simultaneous requests each provider accepts, and where
-something is happening in each open project. They hot-load, alongside any project, and they also
-apply to automation conversations and to subagents.
-
-**What goes in** here: an extension about the machine (processes, provider ceilings, ports, other
-projects' homes), not about anyone's product. **What does not**: a project's UI or rule — that is
-`<project>/.ultimate/extensions/`.
-
-## The extensions
-
-### `projects` — the rail of this machine's projects
-
-**What it solves:** with more than one project open on this machine, switching from one to the other
-and answering "where is something happening right now" without a window or a terminal: a 48px
-**rail** on the left edge of the window, present on every surface, with one initials tile per project
-— running hosts on top, stopped ones below —, the whole block as the click target, the port number
-off-screen and, in the corner of each tile, the app's **presence dot**: grey stopped, green idle,
-pulsing while it works, and the number of unanswered questions in amber. A running project opens in
-that project in this tab; a stopped one comes up; the tile panel (hover or focus) gives the port, the
-state in words, how many conversations of that project are working and how many questions wait for
-an answer, measured at the moment the panel opens, with the time; the `+` creates a project from a
-folder; and the switch at the bottom of the rail turns the **splash animation** on and off, writing only
-that entry in this machine's settings. On the phone there is no rail: the sidebar drawer keeps the
-compact list, with the measurements.
-
-**What it does not do:** it does not measure the host at every instant (the indicator says when it is
-from), it does not show the port on the tile, it schedules nothing, it does not poll, it
-does not kill a process that failed to come up without asking (and never by port, name or group), it
-does not hide or move a project, it does not decide onboarding or trust for a new project, it
-touches no extension besides the splash (and only in this machine's layer), and it does not reach
-another machine. Details in [`projects/README.md`](projects/README.md).
-
-### `rate-limiter` — a ceiling on simultaneous requests per provider
-
-**What it solves:** the provider returns `error 429` when it receives too many requests at once. The
-extension holds how many requests are **in flight at the same time** per provider (`anthropic`,
-`openai`, `opencode`, or whatever this machine's `~/.ultimate/settings.json` names — nothing is limited
-until a provider is named) and puts the rest in a queue in arrival order. The ceiling is per provider
-and per machine: it holds for conversations, subagents and automations together, and it changes when the
-file is saved, with no restart.
-
-**What it does not do:** it does not touch a provider that does not exist here, it does not limit a
-provider outside the map (`Infinity`), it does not read any project's `settings.json` (one project
-cannot raise the others' ceiling), and it does not count tokens or cost. Details in
-[`rate-limiter/README.md`](rate-limiter/README.md).
-
-## Install with an agent
-
-Paste this into any agent (Claude Code, Codex, @ultimate) and it installs the extensions this machine actually
-justifies, instead of all of them:
-
-```text
-Install the machine extensions from https://github.com/julianojulio/ultimate-extensions on this machine.
-Read skills/install-extensions/SKILL.md in that repository first: it is the source of truth, so follow it and
-don't invent steps.
-
-The repository is private for now: if ~/src/ultimate-extensions is not there, clone it there (ask me if I want
-it somewhere else) before starting.
-
-Then measure my machine the way the skill says — how many project homes ~/.ultimate/projects holds, and whether
-~/.ultimate/health.json or the recent model calls show 429s — tell me what the numbers justify, and ask me with
-one card: one option per extension, each with its screenshot, what it does and what it writes to disk.
-Install only what I pick; for the rate limiter, ask which providers to cap and with what ceiling. Prove it live
-(ultimate.extensions(), and the projects and rate-limiter actions) without restarting Ultimate, then tell me what
-was written and how to undo it.
-
-Stop and ask me whenever a step needs a password, a login or a decision.
-```
-
-They load hot — nothing restarts, no project's `.ultimate/` is touched, and only `~/.ultimate/` changes: a
-symlink per extension, and — only when you use one of their switches — the keys they own (`extensions.disable`
-for the splash, `rateLimiter.limits` for the ceilings, which stay unlimited until you name a provider). To undo,
-delete `~/.ultimate/extensions/<name>`.
+Holds how many requests are in flight at once on a provider, queueing the rest in arrival order — the
+answer to `429` errors when too much runs at the same time. Nothing is limited until you name a
+provider. Details in [`rate-limiter/`](rate-limiter/).
 
 ## Install
 
+Paste this into any agent (Claude Code, Codex, @ultimate):
+
+```text
+Install the Ultimate extensions from https://github.com/julianojulio/ultimate-extensions on this computer.
+Read skills/install-extensions/SKILL.md there first: it is the source of truth, so follow it and don't
+invent steps. Install only the extensions it finds justified here, ask me before installing, and tell me
+what was written and how to undo it.
+```
+
+It measures the computer first and shows one card with what it found — one option per extension, each
+with its screenshot — and installs only what you pick.
+
+Or by hand:
+
 ```sh
-git clone git@github.com:julianojulio/ultimate-extensions.git ~/src/ultimate-extensions  # private for now
+git clone https://github.com/julianojulio/ultimate-extensions ~/src/ultimate-extensions
 sh ~/src/ultimate-extensions/install.sh
-```
-
-The script is idempotent — running it again changes nothing — and does two things, for each folder of
-this repository that is an extension (`server.ts` or `web.tsx`):
-
-1. links `~/.ultimate/extensions/<name>` as a **symlink** to the folder here;
-2. links `<name>/node_modules` into the Ultimate clone's `node_modules`, which is where the tests
-   resolve `@earendil-works/*` from. The clone comes from `$ULTIMATE_ROOT`, by default
-   `~/src/ultimate`.
-
-A real folder at `~/.ultimate/extensions/<name>` is **not** replaced: the script warns and moves on
-(no deleting someone else's content). A `node_modules` that is not a link also stays as it is.
-
-It also clears a dead link: a link in `~/.ultimate/extensions/` that points into this repository, at a
-folder that no longer exists, is removed. Installed before the rename (`projetos/` → `projects/`)?
-Run it again.
-
-**None of this asks for an Ultimate restart**: the extensions reload hot. The proof, in any
-conversation:
-
-```ts
-ultimate.action('projects', 'list', {})              // this machine's projects, with state and measurements
-ultimate.action('projects', 'list', { measure: false }) // the rail's cheap read, without measuring
-ultimate.action('projects', 'splash', { enabled: false }) // turns the splash animation off (and true turns it on)
-ultimate.action('rate-limiter', 'status', {})          // { wrapped, limits, active, queued }
-```
-
-And `ultimate.extensions()` shows both with `server.loadedAt` and without `server.error`.
-
-## Hot reload survives the symlink — measured
-
-The host loads the extension through the link's **target** (`realpath`, in `server/discovery.ts`) and
-the watcher reports the file **through the link**; `server/extensions.ts` already resolves one to the
-other before invalidating the module. Measurement made on this machine, with both extensions live:
-
-| | `projects` `loadedAt` | `rate-limiter` `loadedAt` |
-| --- | --- | --- |
-| before editing `projects/server.ts` in the repository | `2026-11-10T01:16:39.746Z` | `2026-11-10T01:16:40.111Z` |
-| after saving | `2026-11-10T01:17:27.808Z` | `2026-11-10T01:16:40.111Z` (untouched) |
-
-And it was not only the `loadedAt`: the test edit added a temporary field to the return of `list`
-(`sonda: 'symlink-reload'`), which the action returned right after. That is, the module re-read was
-**the link target's**, with the new content — not a cache, not the link's file. With the `sonda`
-removed, the action returned `{ projects, at, splash }` again. The `rate-limiter` answered `status`
-normally the whole time, and **the host was not restarted**.
-
-That is why the install is by symlink: you edit here, and Ultimate reloads on its own.
-
-## Edit and test
-
-The code is **here**; `~/.ultimate/extensions/<name>` is only the link Ultimate reads. After a
-`git pull` (or moving the clone), run `install.sh` again.
-
-```sh
-cd ~/src/ultimate-extensions/projects     && node --test projects.test.ts   # 26 tests
-cd ~/src/ultimate-extensions/rate-limiter && node --test limiter.test.ts    # 12 tests
-```
-
-Both suites are pure (fixtures, a temporary `HOME` and a fake host): no test reads the machine, opens
-a process or talks to a real provider. What is about the machine — the link, the reload, the section
-in the sidebar — is proven live, with Ultimate open.
-
-## Structure
-
-```
-ultimate-extensions/
-├── install.sh          # links each extension into ~/.ultimate/extensions/<name>
-├── LICENSE             # MIT
-├── projects/           # the projects rail on the left edge
-│   ├── README.md
-│   ├── server.ts        # actions: list, measure, state, start, create, stop, splash
-│   ├── projects.ts      # the pure calculations (initials, groups, presence, path, port, stop, splash)
-│   ├── types.ts         # what the actions return
-│   ├── web.tsx          # the rail, the tile panel, the + dialog, the phone list and the bottom
-│   ├── projects.test.ts
-│   └── screenshots/     # rail, state, bottom, panel and a new project's dialog
-└── rate-limiter/       # a ceiling on simultaneous requests per provider
-    ├── README.md
-    ├── server.ts        # wraps the provider stream; action: status
-    ├── limiter.ts       # the semaphore and the reading of the ceilings
-    └── limiter.test.ts
 ```
 
 ## License
 
-MIT — © 2026 Juliano Julio Costa. See [`LICENSE`](LICENSE).
+MIT — see [`LICENSE`](LICENSE).
