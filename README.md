@@ -11,8 +11,7 @@ that project in this tab, or to bring a stopped one up. Details in [`projects/`]
 ## `rate-limiter` — a ceiling on simultaneous requests per provider
 
 Holds how many requests are in flight at once on a provider, queueing the rest in arrival order — the
-answer to `429` errors when too much runs at the same time. Nothing is limited until you name a
-provider. Details in [`rate-limiter/`](rate-limiter/).
+answer to `429` errors when too much runs at the same time. Details in [`rate-limiter/`](rate-limiter/).
 
 ## Install
 
