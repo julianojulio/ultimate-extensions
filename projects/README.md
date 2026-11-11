@@ -1,458 +1,87 @@
-The rail of this machine's projects: a 48px column on the left edge of the window with one tile per
-project — running hosts on top, stopped ones below —, where the whole block is the click. Tap a running
-project and it opens in this tab; tap a stopped one and the host comes up; and the tile panel says what
-the tile cannot fit: the port, the state in words, how many conversations of that project are working
-and how many questions wait for an answer, measured at the moment the panel opens.
+# projects — a rail of projects
 
-Every tile carries the app's **presence dot**: grey stopped, green idle, pulsing while it works, brand
-**still** when the reading that said "working" is older than the wave, and the number in amber when a
-question has no answer. At the bottom of the rail sit the ⟳ (measure
-again), the `+` (create a project) and the switch of the **splash animation** — which writes only the
-`splash` entry of this machine's settings.
+A column on the left edge of the window, one tile per project: running hosts on top, stopped ones
+below, each with a presence dot and the number of unanswered questions. One click opens a project or
+brings it up.
 
-![The rail on the left edge: running projects on top, with the presence dot and the question count, a
-line, the stopped ones below, and the bottom with ⟳, + and the splash
-switch](screenshots/rail.png)
+![The rail on the left edge](screenshots/rail.png)
 
-**Machine extension**: it lives in `~/.ultimate/extensions/projects/` — a symlink to this repository's
-`projects/` —, applies to every project on this machine and belongs to none of them. It uses the
-`shell.rail` slot, a full-height column beside the title bar and every surface (agent, system, review,
-memory); inside a frame Ultimate does not draw the rail and the extension does not appear.
+## How it works
 
-## The rail
+One tile per project, drawn with its initials (`app_evangelho` → `AE`). This window's project comes
+first, then the other running ones by name, a thin line, then the stopped ones. The same order on every
+open, so no tile jumps around.
 
-```
-┌──┐
-│AE●│  ← this window: text-brand, green dot (idle), and the click only opens the panel
-│GL◉│  ← running and working: the dot pulses (brand); the ① in the top corner is a question
-│RO◉│  ← running and working, measured longer ago than the wave: brand, still
-│RO●│  ← running and idle: green dot
-│SA○│  ← running and not answering: hollow dot, no pulse and no amber
-│──│  ← a thin line separates the running ones from the stopped ones
-│NO●│  ← stopped, dimmer: grey dot, and the click brings the host up
-│  │
-│⟳ │  ← measure again (the title says the time of the last read)
-│+ │  ← create a project
-│◑ │  ← the splash animation: switch to the right = on (the title says the rest)
-└──┘
-```
+The dot in the corner is the project's state: grey stopped, green up and idle, pulsing while the last
+reading saw it working, hollow when the host does not answer. The number in the corner is the count of
+questions without an answer (`9+` from ten up), in amber.
 
-- **The initials, not the name.** Two letters per project: `app_evangelho` → `AE`, `robsoncosta` → `RO`,
-  `gta2xlwifi-lineage` → `GL` (two words give the first letter of each; one word gives its first two
-  letters). Two projects can coincide in their initials — the panel gives the full name and path, and
-  so does the tile's `title`.
-- **The whole block is the click target**, and **the port does not appear on the tile**: it is the
-  address of the link (`http://127.0.0.1:<port>`), not on-screen information. `:port` is read in the
-  panel, where it is diagnostics.
-- **Order**: this window's project opens the column; the other running ones come by name; the thin
-  line; the stopped ones by name. The same order on every open, so that a tile does not jump around.
-- **Running, and it is not this window** → the tile is an `<a href>`: one click opens that project **in
-  this tab** (it is a project switcher, not a way to peek at them; ⌘/Ctrl+click opens a new tab, like
-  any link).
-- **Stopped** → the tile is a `<button>`: one click brings the host up (the same spawn as `start`),
-  and the tile shows a spinner while it comes up. Did it not come up? The tile gains a red ring with
-  the error in the `title`, and the panel says the error — the **first** line of the process log that
-  the process names as an error (`Error:` / `[error]`), not the last one: the stack below the first is
-  the noise, and the last lines are usually the crash handler's.
-- **This window** → `text-brand`, with the background tinted brand and no switch action: one click
-  opens the panel. What serves the screen you are clicking in is not switched for itself.
-- **State in words, never colour alone**: the tile is too small for the word, so it is in the panel
-  (`running` / `stopped`, and `stopping` while `stop` works), in the column's order — running on top,
-  stopped below — and in each tile's `title`/`aria-label`, which give the whole sentence. The dot's
-  colour is reinforcement.
+A tile is one click: a running project opens in this tab, a stopped one is brought up.
 
-## The state on the tile
+Hovering or focusing a tile opens its panel after a moment, with what the tile does not fit: the port,
+the state in words, how many conversations are working and how many questions wait, the command to
+copy and the stop button. Those numbers are measured when the panel opens, with the time of the
+reading.
 
-![The tiles up close: AE with a green dot, GL with the dot pulsing and the number 1 in amber, RO with a green dot, SA with the hollow dot, SI with the green dot and the 9+ in amber, and NO with the grey dot](screenshots/state.png)
+![The tile panel](screenshots/panel.png)
 
-The 6px dot in the corner uses the app's own **presence colours**, but the rail does **not** speak the
-`AgentMark` grammar, and it says so instead of pretending: `size-1.5 rounded-full`, with the
-rail-coloured ring over it, and `data-presence` on the element. The classes are copied from
-`extensions/conversations/marks.tsx` — this extension does not import from there —, and the meanings
-are its own, because the rail is not a conversation:
+On the phone there is no rail: the same list, compact, stays in the sidebar.
 
-| | `AgentMark` (a conversation) | the rail (a project) |
-| --- | --- | --- |
-| amber | the conversation is **waiting** for you | the **number** of open questions, in the corner |
-| grey | idle | stopped: there is no host |
-| green | — | up and idle (`0 working` measured) |
-| brand, pulsing | the agent is working | a conversation of that project is working **now** |
-| brand, still | — | it was working when it was measured, and that is longer ago than the wave |
+## Using it
 
-Why they differ: a project has two things a conversation does not — **being up at all** (the grey and
-the green) and **someone else's questions** (the amber number, which is the same amber the questions
-carry elsewhere, in its counting role, not as "waiting"). The one rule both keep is the important one:
-**a pulse means now**, never "it was working once".
+- **Switch project** — click a running tile: it opens in this tab. ⌘/Ctrl+click opens a new tab, like
+  any link.
+- **Bring a stopped project up** — click its tile; it shows a spinner until the host answers. If it
+  does not come up, the tile gains a red ring and the panel says why.
+- **Stop a host** — the button in the tile's panel. A host this extension did not start (born in a
+  terminal or in a supervisor) stops only after a confirmation, with the port and the pid in the
+  question.
+- **Create a project** — `+` at the bottom of the rail: type the folder's path, absolute or starting
+  with `~`. The host comes up and its tile appears; the card offers `Open it`. Its first run, its
+  onboarding and the trust decision happen in that project's own window.
+- **Measure again** — `⟳` reads the machine now; its `title` says when the last reading was.
+- **Turn the splash on or off** — the switch at the bottom of the rail. One click, and one click back.
 
-| What you see | When |
-| --- | --- |
-| **grey** dot (`muted-foreground/60`) | the project is stopped; the tile is also dimmer |
-| **green** dot (`success`) | running and idle: `0 working` measured |
-| **pulsing** dot (`animate-pulse-dot bg-brand`) | running and with a conversation working now, from a reading newer than the wave (15 s) |
-| **brand** dot, no pulse | running, the last reading said it was working, and that reading is **older** than the wave: the colour is the fact, the animation would be a lie |
-| **hollow** dot (only the ring) | running and **not answering** within 3 s: the tile says `unavailable`, with the reason |
-| **amber number** in the top corner | there is a question without an answer; `1`..`9`, and `9+` from ten up. At zero it does not appear |
+## Configuration
 
-- **The number does not cover the initials.** It sits in the top-right corner, in the gap between the
-  tiles — which are spaced 8px apart for that reason —, with the rail-coloured ring separating it from
-  the background. The ends of the column keep the same room: the box that scrolls clips what leaves
-  it, so it has 6px of padding above the first tile and below the last — the badge hangs 4px outside
-  its tile and the presence dot 2px, and without that room the first tile's badge is cut flat at the
-  top edge. A `9+` above ten is the limit: the exact number of 42 questions does not change the
-  decision of whoever looks at the rail, and too wide a number would hide the project's name.
-- **Not answering is not idle.** A running host that did not answer within the deadline stays without
-  pulse and without amber, with the hollow dot — the silence of a stuck host cannot be read as calm.
-- **Zero is a measurement.** `0 working` is an answer, and it is what turns the dot green. What has not
-  been measured yet (the wave has not come back) is not zero either: the dot stays hollow and the
-  `title` says `not measured yet`.
-- **The tile's `title` and `aria-label` give the whole sentence**, with the time of the measurement:
-  `gta2xlwifi-lineage — running · 2 working · 1 unanswered question · measured at 21:53 — open it in this tab`. An
-  indicator that ages is acceptable; one that lies is not — which is why it carries when it is from.
-- **When it measures:** on mounting the rail, on entering the rail with the pointer (**at most once
-  every 15 s**), **when the window regains the focus** or becomes visible again (same ceiling: coming
-  back to the window is exactly when the rail is looked at), on `⟳`, and after every action that changes
-  the machine (`start`, `stop`, `create`). One call per reading: the rows and the numbers come together.
-  The panel keeps measuring when it opens, and its measurement holds for that tile — it wins
-  over the wave's.
-- **The pulse ages.** A reading older than the wave stops the pulse and keeps the brand colour (see the
-  table above): the `title` already says when it is from, and the pixel no longer says "now".
-- **This window's own dot never ages**: its work comes from the conversation list the client already
-  streams (`busy`), with no request at all, and it changes the moment a conversation starts or stops.
-- **There is no timer reading the machine.** The wave is the full `list` action (each running host's
-  `state`, in parallel, with the 3 s deadline that already existed): a snapshot, with a time, not a
-  clock. What ticks is the age of this window's own local reading, which asks nobody anything.
+This extension has no options of its own. What exists is the one thing the splash switch writes, in
+this machine's `~/.ultimate/settings.json`:
 
-## The tile panel
-
-![The tile panel: name, path, running :4811, 2 working · 1 question, the time of the measurement, and the buttons to copy the command and stop](screenshots/panel.png)
-
-It opens on **hover** and on **focus** (Tab up to the tile) after **150 ms** — crossing the left edge of
-the window on the way somewhere else must not open a panel of 240px over the conversation —, and closes
-when the pointer or the focus leaves, **when anything scrolls** (it is anchored where it opened, so a
-scroll would leave tile and panel apart) or with `Esc`. It is `position: fixed`: it is not clipped when
-the column scrolls, and it stays
-a child of the tile in the DOM order, which is what lets the keyboard reach its buttons. Content, from
-top to bottom:
-
-| What | From where |
-| --- | --- |
-| the name and the path | `host.projects()` (the project home's `project.json`) |
-| the **home** the actions address (`~/.ultimate/projects/<name>-<8>`, or the whole path when it is elsewhere) | the row of the read: two homes can be the same project, and the name the actions speak is resolved to one of them |
-| `running` / `stopped`, and `:port` | that project's lock, re-read on every read, with the port validated (1..65535) |
-| `this window` | the project that serves this window |
-| `1 working · 1 question` | the `measure` action, asked **when the panel opens**, with the time beside it |
-| `command` | copies `ultimate <path>`, with single quotes when the path asks for them |
-| `stop` | only on a running project that is not this window |
-
-- **The measurement is of the instant the panel opens**, and the panel writes its time (`measured at
-  21:53`). Closed, nobody measures anything: there is no poll, and the number never appears on the
-  tile. The measurement the panel makes also holds for that tile's dot and number on the rail: while
-  the panel is open, it wins over the wave's.
-- **An invented zero is the worst possible error here**: a host that does not answer in 3 s shows
-  **`unavailable` with the reason** (`no answer in 3s`, `HTTP 404`, …), never `0`. It is exactly the
-  false zero that would make one ignore the stuck project.
-- **A stopped project shows no measurement**: there is nobody to ask. The panel says `stopped · click
-  to start` and offers the command to copy. Unless the lock names an address that is not of this
-  machine (`the lock names no port of this machine`): the panel says that instead of offering a link
-  and a number it cannot trust.
-- **A boot that does not answer is reported, not hidden**: the panel says `no lock and no answer in 20 s
-  (a first boot on a cold disk can take longer: try again)`. Twenty seconds is the whole deadline —
-  the lock and the answer on its port —, and a first boot with a cold cache can miss it; the second
-  click is the retry.
-- **Stop** kills only the pid of that project's lock (see the rules below). A host **that this
-  extension did not start** — born in a terminal, in a supervisor, by someone else — stops only after
-  the panel asks, with the port and the pid in the text: `Stop the host on :4803 (pid 1234)? It was
-  not started from here.` → `stop it` / `keep it`. The answer reaches the action as `confirm: true`;
-  without it, the action returns `needsConfirm` and touches nothing.
-- An action error appears in the panel itself, in one to three lines (the whole text in the `title`).
-
-## The `+`: create a project
-
-![A new project's dialog: a path field, with ~/src/my-project as the example](screenshots/new-project.png)
-
-A path field and a button. The path accepts `~` (the home of whoever is using it) and has to be
-**absolute**: empty, accidentally relative and `~other` are refused with a sentence, not with a guessed
-folder. The server checks that the folder exists and is a directory (`No such folder: …`,
-`Not a folder: …`) and then brings the host up as `start` does: `ultimate <path>` detached (`detached`,
-no tty), **without a window** (`--no-open`) and **without a port chosen from here** — the program takes
-the port itself (from **4747**, retrying the next one when it is taken) and publishes it in the lock —,
-with the whole bring-up (the lock, then `GET /` on the port it names) within **20 s** (not up in the
-deadline? the process is terminated and the dialog shows the first error line of its log).
-
-- **The tile appears** on its own when the host answers, and the dialog swaps the form for a card:
-  `novo is running :4750`, with `Open it` (opens that window) and `Done` (stays here). Creating does
-  not change window for you: **that project's first run, the onboarding and the trust decision for
-  that folder happen in its own window** — this extension decides nothing for it.
-- **A path that is already a project in the list is selected, not duplicated**: running, the card says
-  `app_evangelho is running :4801` and `No second host was started for that folder.`; stopped, this
-  extension brings that host up; and this window's own path says `is this window`. In none of those
-  cases is a second host born for the same root.
-- **Two folders with the same project name cannot be told apart here**, because the actions speak by
-  name: a second `app` would make the first's tile answer for the second (and stop it in its place). So
-  the `+` **refuses** the second outright, naming the project that already exists.
-- **A new project does not register itself by hand**: the central home (`~/.ultimate/projects/<name>-<8
-  hex of the path>`) is born with the host running in that folder, which is why `list` already finds
-  it on the next read. The extension computes that home to pass `ULTIMATE_HOME` to the process — it is
-  the same calculation as `server/project.ts:projectHome`, and it is the only point in this extension
-  that depends on a detail of Ultimate; if it changes there, what breaks is the new project's tile
-  appearing (and the fix is to keep the two the same).
-
-## The splash animation
-
-![The bottom of the rail up close: the ⟳, the + and the splash switch, to the right when it is on](screenshots/splash.png)
-
-Ultimate opens with the wordmark drawing itself over the window while the app loads. That is the
-splash, and on switching projects it appears again. The last icon at the bottom of the rail turns it on
-and off with one click:
-
-- **switch to the right** = on; **to the left** = off. The `title` and the `aria-label` give both:
-  `Splash on project switch: on — turn it off` / `Splash on project switch: off — turn it on`.
-  Before the column's first read the state is not known, and the sentence says `unknown`.
-- **One click is reversible**, so it asks nothing: it asks the `splash` action for the opposite of what
-  the column read.
-- **Where it writes**: `~/.ultimate/settings.json`, this machine's layer — the **only** place where
-  this extension writes outside the home of a project it started itself. The file is read first and
-  rewritten through a temporary beside it and a `rename`, with **every other key preserved**
-  (`modelFamilies`, `lander`, whatever there is).
-- **What it changes**: only the `splash` entry of `extensions.disable` — turning it off adds the name
-  once, turning it on removes it. `extensions.enable` **is not touched** (`disable` wins over `enable`
-  in the same layer, so turning it off works even with `splash` there), and the project's settings are
-  never written.
-- **The file is rewritten as normalised JSON** (two-space indentation, one line at the end): the
-  formatting from before, and only it, is lost.
-- **What it refuses, without writing anything**: invalid JSON, a file that is not an object, an
-  `extensions` that is not an object, a `disable` that is not a list of names — the core would throw the
-  whole file away, and the user would lose all the other keys. The error sentence (with the path and
-  the reason, plus `Nothing was written`) appears in the button's `title`, which becomes a red `!`; the
-  file stays exactly as it was. A missing file is not an error: turning it off creates the file,
-  turning it on creates nothing.
-- **The limit, written down**: a `<project>/.ultimate/settings.json` can turn the splash off or on **on
-  top** of this, because the project's layer wins over the user's. This button speaks about this
-  machine's layer: with a project saying the opposite, it changes what is written in your file and the
-  effect in that project remains the project's.
-- **The extension hot-loads**: the state the button shows comes from the column's read (`list` returns
-  `splash`), never from a module variable — and `splash.enabled` in the host's extension list changes
-  **without a restart**.
-- **The cost, written down honestly**: turning it on or off writes `extensions.disable`, which changes
-  the set of loaded extensions — and therefore the web bundle —, so **every open window reloads** (with
-  the splash on, each one replays the animation). The button's `title` says it: `… — turning it changes
-  the extension bundle, so every open window reloads`. There is no route that changes this key without
-  rebuilding the bundle; a toggle of the splash is worth a client reload, and it is one click.
-
-## The four rules of starting, stopping and creating
-
-All four are mandatory, and each one was born from a way of lying:
-
-1. **The guard is the live pid, never the file.** An `ultimate.lock` whose pid no longer exists is a
-   stopped project — the tile says `stopped` and the click brings it up. A live pid's lock is "already
-   running on :N" and the start click does nothing. The lock is re-read from disk on every action: the
-   extension reloads between one and the other, and a list in memory would age.
-2. **The host is born detached.** `spawn` with `detached` (the system's `setsid`), no tty, with the
-   output in a file — a child of the host that started it would die on its restart.
-3. **The port belongs to the host that took it, and success is the live pid plus our lock.** The
-   extension does **not** pass `--port`: `bin/ultimate.ts` takes the port (from 4747), retries the next
-   one when it is taken (`EADDRINUSE`) and publishes the one it got in the lock — a port chosen from
-   outside cannot be reserved, so two starts at the same instant would pick the same one. The action
-   waits for the lock to name **twice in a row** the pid it spawned (the supervisor first writes the
-   port it asked for, then the one it got), asks that port, and declares success only when the lock
-   still names that pid and port, that pid is **alive**, and no other project of this machine publishes
-   that port. A port that answers without our lock is somebody else's host: the action **fails** with
-   the reason in the panel, and the process it started is terminated. **20 s** is the whole deadline.
-4. **Stopping kills only the pid of that project's lock** (`SIGTERM`, and `SIGKILL` after 8 s) and
-   checks that the lock is gone. No `pkill`, no killing by port, no process group — and a host this
-   extension did not start asks for confirmation, as the panel shows above.
-
-## The phone, and the sidebar on the desktop
-
-- **On the phone there is no rail**: a 48px column beside a 390px conversation is a theft of space. The
-  sidebar — which on the phone is a drawer — keeps **the compact list from before**: the dot, the name,
-  the state in words, `:port` (link to the same tab) with `1 working · 1 question` beside it, the
-  command to copy when the project is stopped, and the start and stop button, visible on touch
-  (`pointer-coarse`), because there is no hover on a touch to reveal it.
-- **On the desktop and on the tablet the sidebar's Projects section ceases to exist**: the rail is the
-  only project switcher. With that the sidebar starts again at @ultimate, without the section above it.
-- The split is by the SDK's `useViewport()`: `phone` for the list, `desktop` and `tablet` for the rail.
-
-## Where the data comes from, and when it measures
-
-| What | From where | When |
-| --- | --- | --- |
-| the projects, the root, the pid and the URL | `host.projects()`: the homes of `~/.ultimate/projects`, with `running` only for those with a **live pid** in the lock | on opening the window, after every action, and on the refresh button |
-| the conversations working **in this** project | `host.conversations()`, the `busy` of this host's task graph | on the rail's wave, and when this tile's panel opens |
-| the questions without an answer **of this** project | the `messages` service (`openQuestions`), the same count as the questions panel | on the rail's wave, and when this tile's panel opens |
-| the same, **in another** project | `POST <url of the other host>/api/extensions/projects/actions/state`, on loopback, with the target's `Origin` — the same path `lib/remote.ts` uses to talk to another instance | on the rail's wave, and when that tile's panel opens |
-
-Neither the `busy` nor another project's questions are anywhere on disk: the `conversations.json` each
-host publishes keeps neither the task graph nor the question box (on purpose). So the question goes to
-that project's own host, which answers about itself (`state`) and **does not relay the question to
-anyone else**. And the address it goes to is one this extension validated: `http` on loopback, with a
-real port, with no user, path or query — a lock is third-party input, and `http://127.0.0.1:4748@evil.com`
-is a URL for `evil.com`. What does not pass reaches neither a `fetch` nor a link.
-
-The rail opens with `list({ measure: false })`: the cheap read, without a trip to another host, which
-only says who is up (it is what paints the tiles first). The **wave** is the full `list()`, and it is
-what lights the dot and the number: it goes out on mounting the rail, on entering the rail with the
-pointer (at most once every 15 s), when the window regains the focus (same ceiling), on `⟳` and after
-every action that changes the machine. It **is** the read of the rows as well: one call, not one for the
-list and another for the numbers. Each row carries its own `measuredAt`, so a host that took 3 s to
-answer does not make the others claim a reading 3 s older than theirs. `list()` with no argument keeps
-measuring everyone (that is what the phone list shows, and what any caller from outside receives), now
-with `splash` among the fields.
-
-## What the extension writes on disk
-
-In the home of a project that it started itself:
-
-- `<project home>/projects-started.json` — `{ pid, port, at }`: the pid this extension started. It is
-  what lets `stop` know that host is its own, including after the extension itself reloads. A pid that
-  does not match the lock's is read as "it was not me" and the panel asks. The file is deleted when the
-  host stops.
-- `<project home>/projects-start.log` — the output of the process that was started (the supervisor
-  writes the rest in `supervisor.log`); the error line in the panel comes from it.
-
-And, for a **new** project, a system temporary directory (`ultimate-projects-…` in the temporary
-directory) with the first start's log, deleted as soon as the action finishes — because a new project
-has no home yet. If the process dies before writing `project.json` (a port taken in the middle, a broken
-`.ultimate/`, an interrupted reset), the extension **deletes the home it created**, and `list` also
-ignores a home without `project.json`: a dead start never becomes a tile without a path.
-
-And **one** file outside those homes: this machine's `~/.ultimate/settings.json`, written by the splash
-switch (the section above). It is the only one, and it is rewritten whole as normalised JSON — two-space
-indentation and one line at the end, so the formatting from before is lost, but no key is lost.
-`<project>/.ultimate/settings.json` is **never** touched.
-
-**The three known limits, named:**
-
-- Between the `spawn` and the writing of `projects-started.json` there is a window of milliseconds. If
-  the extension restarts there, the process it started stays alive and unregistered — and the worst
-  case is **one extra confirmation click**, not a lost process.
-- For a new project the record is written only **after** the host answers (before that there is no home
-  to write to), so the same window holds for the whole first start, which lasts up to 20 s. The cost is
-  still one extra confirmation click.
-- **Stopping a supervisor that does not come down can leave the core orphaned.** `stop` signals the
-  pid of the lock — the supervisor — and only escalates to `SIGKILL` on that same pid after 8 s. The
-  core is a `fork` of the supervisor, not a group, so a supervisor stuck past the `SIGKILL` leaves the
-  core running with the port, a lock naming a dead pid, and the next `start` bringing up a **second**
-  host on the next port. The extension does not invent a new signal for this: killing a group by port
-  is the thing it refuses to do. What an orphaned core takes is `ultimate` itself, on the next start,
-  or a `kill` on that pid by hand.
-
-Nothing in `content/`, nothing in any project, and from the user's home only that settings file: nothing
-is ever written in the user's `~/.ultimate` outside the homes of the projects this extension started —
-and of the machine's `settings.json`, only the `splash` entry of `extensions.disable`.
-
-## No poll
-
-Opening the window reads once; switching the conversation shown is another read (the SDK indexes an
-action's read by the conversation it is made in); the presence **wave** goes out on mount, on entering
-the rail with the pointer (at most once every 15 s), **when the window regains the focus or becomes
-visible** (same ceiling), on the refresh button (the bottom of the rail's
-`⟳`, whose `title` says the time of the last read and turns red when that read failed) and after every
-action that changes the machine. A failed read does not empty the rail: the tiles stay with their ages.
-There is no periodic timer, and no event subscription from another host: **an indicator that ages is
-acceptable; one that lies is not** — and that is why each tile says, in the `title`, when the
-measurement it shows is from.
-
-## The actions
-
-- `list` — `{}` (or no argument): this machine's projects with state, port and command, measuring
-  every running host; each row carries `home` (the home the actions address) and `measuredAt` (when its
-  own numbers were read). `{ measure: false }`: the same list **without** measurement and without a trip
-  to another host — it is the rail's read.
-- `measure` — `{ name }`. What was measured in that project now: `{ working, openQuestions, reason?, at }`,
-  where `at` is when **that** answer came, not when the wave started.
-  It is what the tile panel asks for when it opens.
-- `state` — no arguments. Only this host: `{ working, openQuestions, at }`. It is what another host
-  asks; it never leaves here to ask anyone else.
-- `start` — `{ name }`. Brings that project's host up and only returns when **its own** lock names the
-  pid that was spawned and that port answers; returns the new line. A project that already runs comes
-  back as it is.
-- `create` — `{ path }`. Expands `~` to this Ultimate's user home, checks the folder and brings its host
-  up; returns `{ created, project }`. A project that is already that folder is selected (or started, if
-  it was stopped), never duplicated.
-- `stop` — `{ name, confirm? }`. Brings that project's host down and checks that the lock is gone;
-  returns `{ stopped: true, project }`, or `{ stopped: false, needsConfirm: true, pid, url }` when the
-  host was not started by this extension and the `confirm: true` is still missing.
-- `splash` — `{ enabled: boolean }`. Turns the splash animation on or off in this machine's settings and
-  returns `{ splash }`; `list` also returns `splash`, which is where the bottom button reads the state
-  from. It refuses, without writing, the file the core would refuse whole.
-
-**`stop`, `create` and `splash` are user actions** (`userActions`): an agent calling the extension is
-refused, so `confirm: true` from a tool call cannot bypass the confirmation of `stop`, and nothing
-creates a project or flips this machine's splash behind the screen. `list`, `measure`, `state` and
-`start` stay open: the rail, the phone and another project's window read them, and a host that is down
-is brought up by whoever needs it.
-
-## What remains out
-
-- **It does not measure the host at every instant.** The dot and the number are from one read, with a
-  time: they age until the next wave, and it is the `title` that says when they are from. There is no
-  timer, and nothing blinks on its own beyond the "it is working" pulse.
-- **It does not show the port number on the rail**, on purpose: it is an address, not information. It
-  is in the panel, for diagnostics.
-- **It has no rail on the phone**, and does not switch projects through it there: on the phone, the
-  sidebar's drawer is the switcher.
-- **It decides nothing for a new project**: creating brings the host up and shows the tile; onboarding,
-  trust and that folder's first run happen in its own window. And creating does not change window by
-  itself.
-- **It does not act on a host the extension did not start** without asking — and never kills by port,
-  by name or by group.
-- **It schedules nothing.** Starting, stopping and creating are clicks; there is no schedule, trigger or
-  supervisor of its own.
-- **It does not poll or follow in real time**: to see again, the pointer on the rail (every 15 s), the
-  tile panel or `⟳`.
-- **It does not hide, move or delete a project.** The list is the one Ultimate has, and a home outside
-  `~/.ultimate/projects` (a preview, a scratch server) is the same project: **one tile**, the one of this
-  window when it is in the list, the first by home otherwise — and the panel says which home the actions
-  address (`~/.ultimate/projects/<name>-<8>`, or the whole path when the home is elsewhere).
-- **It does not tell two journeys into the same name apart beyond that.** The actions speak by project
-  name, and the name is resolved against the same deduplicated list the rail draws, so `start`, `stop`
-  and `measure` address the home the panel shows — never another one.
-- **It does not tell two different folders with the same name apart.** Two *homes* of the same root are
-  one project now (see above). Two different roots with the same folder name are still one name to these
-  actions: the first by home is the one that answers `start`, `stop` and `measure`. The `+` refuses to
-  create the second, and each tile's panel shows the whole path, so that one knows which is which.
-- **It does not reach another machine**: only what runs on this one, on loopback.
-- **It does not clean an orphan lock**: if a host only stopped with `SIGKILL`, its lock stays (with a
-  dead pid) and the tile says stopped; the one that replaces it is `ultimate` itself, on starting again.
-- **It does not switch projects in a frame**: Ultimate does not draw the `shell.rail` slot inside a
-  frame, and the extension respects that.
-- **It is not an extension switch**: the bottom button touches only the splash, and only in this
-  machine's layer. What turns extensions on and off in general is Ultimate's setup panel.
-
-## Languages
-
-The interface speaks **English**, like the rest of Ultimate (`New project`, `running`, `stopped`,
-`0 questions`, `stop it`, `Splash on project switch: on — turn it off`), because the rail lives beside
-`Conversations` and `Automations`. Both the interface and this README are in English.
-
-## Tests
-
-```sh
-cd ~/src/ultimate-extensions/projects
-node --test projects.test.ts
+```json
+{ "extensions": { "disable": ["splash"] } }
 ```
 
-30 pure tests, with fixtures: the words of the state; the link's port (and the URL without a port);
-the lock's port — a whole number from 1 to 65535 and nothing else — and the host's address (loopback,
-`http`, a real port; `127.0.0.1:4748@evil.com` refused); the
-count and the question counter, including what was not measured and the **zero that is a measurement**;
-the tile's presence dot (working, idle, stopped and not answering), **the age of the pulse** (fresh, at
-the wave's ceiling, old, and a time that does not parse) and the corner number (1..9, `9+`,
-nothing at zero); the tile's sentence, with the time of the measurement; the wave that separates running
-projects from stopped ones, with each row's own time; the `argv` with which a host is started — and that
-it carries **no** `--port`; two homes of the same project collapsing into one row (this window's); the
-home as the panel shows it; the stop decision — including the dead-pid lock and this window's project,
-which has nothing to stop; the tile's initials and the tile that carries no port; the rail's two groups
-(this window's first, and a project with only a measurement counting as stopped); the dialog's expansion
-and refusal of a path; the home a new project will occupy; and the splash — turning it on and off while
-preserving the other keys, without duplicating the entry, and refusing what the core would refuse whole.
-No test reads the machine, opens a process or makes a request.
+The switch flips that entry: off adds `splash`, on removes it, and every other key of the file stays as
+it is. With no file there, turning it off creates the file. The file is rewritten as normalised JSON —
+the old formatting is lost, no key is.
 
-Each extension's `node_modules` is a **symlink to `~/src/ultimate/node_modules`**, created by the
-repository's `install.sh` (this machine's extensions trick). The reading of the machine, the trip to the
-other host, `splash.enabled` changing without a restart, the real starting and stopping and creating are
-proven live — with an isolated instance (temporary `ULTIMATE_USER_HOME` and `ULTIMATE_HOME`, the
-extension linked by symlink to the checkout you work in), a real project created with the `+` and fake
-hosts for the dot's four states: that is how the five images above were made. The pulse does not appear
-in a PNG — the images show the working dot stopped in one frame.
+Writing it by hand has the same effect: a different set of extensions means a new web bundle, so
+**every open window reloads**. The switch's tooltip says so. To undo, remove `splash` from the list and
+save, or click the switch again.
+
+A project's `.ultimate/settings.json` can say the opposite on top; this switch speaks about this
+machine's layer only.
+
+## Actions
+
+For agents and automation, one line each:
+
+- `list` — this machine's projects with state, port and command; `{ measure: false }` skips asking the
+  other hosts.
+- `measure` — `{ name }`: that project measured now, with the time of the answer.
+- `state` — this host only: working conversations and open questions; another host asks it.
+- `start` — `{ name }`: brings that host up, and returns when it answers.
+- `create` — `{ path }`: brings up the host of a new folder and returns the new project.
+- `stop` — `{ name, confirm? }`: takes that host down; `needsConfirm` when it was not started here.
+- `splash` — `{ enabled }`: turns the splash animation on or off in this machine's settings.
+
+`stop`, `create` and `splash` are user actions: an agent calling them is refused, so nothing stops a
+host, creates a project or flips this machine's splash behind the screen.
+
+## What it does not do
+
+- It does not poll: readings happen when the rail is opened, entered or focused, on `⟳`, and after
+  every action that changes the machine.
+- It does not stop the host of this window — stop it from another window.
+- It does not kill a host it did not start without asking.
+- It does not reach another computer: only what runs on this one, on loopback.
