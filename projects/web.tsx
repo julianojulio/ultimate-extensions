@@ -10,11 +10,13 @@
  * `text-brand`. The port is still there, but as the link's **address**: `:port` is read only in the tile's
  * panel, together with the state written out and the measurements.
  *
- * The panel opens on hover and on focus, and it is what says what the tile cannot fit: `running` /
- * `stopped`, the port, the path, and `1 working · 1 question` **measured when the panel opens**, with the
- * time. Stopping and copying the command live in it — outside the link, because a `<button>` inside an
- * `<a>` is invalid HTML. A stopped project shows no measurement; a host that does not answer shows
- * `unavailable` with the reason, never `0`.
+ * The panel opens on hover and on focus — after a short delay, so crossing the left edge of the window does
+ * not open it, and it closes when anything scrolls, because it is anchored where it opened —, and it is
+ * what says what the tile cannot fit: `running` / `stopped`, the port, the path, the home the actions
+ * address, and `1 working · 1 question` **measured when the panel opens**, with the time. Stopping and
+ * copying the command live in it — outside the link, because a `<button>` inside an `<a>` is invalid HTML.
+ * A stopped project shows no measurement; a host that does not answer shows `unavailable` with the reason,
+ * never `0`.
  *
  * The `+` opens a new project's dialog: a path (`~/src/my-project`), validated and brought up as `start`
  * brings one up — first free port, detached, without a window, health in 20 s. From there the project is
@@ -25,8 +27,8 @@
  * and on the desktop it ceases to exist so that there are not two.
  *
  * No poll: the rail reads on opening, makes a wave of full reads on entering with the pointer (at most
- * once every 15 s), and again on the refresh button and after each action — and the tile's `title` says
- * when the dot and the count are from.
+ * once every 15 s), and again on the refresh button and after each action — one call per reading, the
+ * rows and the numbers together. Every tile's `title` says when its dot and count are from.
  */
 import {
   CheckIcon,
@@ -59,6 +61,7 @@ import {
 import {
   workingCount,
   groups,
+  homeLabel,
   initials,
   linkOf,
   measured,
@@ -108,6 +111,10 @@ const SplashAction = actionRef<{ enabled: boolean }, Splash>('projects', 'splash
 /** How often passing the pointer over the rail may redo the reading of who is up. */
 const WAVE_INTERVAL = 15_000
 
+/** How long the pointer or the focus has to rest on a tile before its panel opens: crossing the left edge
+ * of the window must not open a panel of 240px over the conversation. */
+const OPEN_DELAY = 150
+
 export default defineWebExtension({
   slots: {
     // The column on the left edge: it exists on every surface, and on the phone it falls silent.
@@ -139,13 +146,18 @@ function List() {
  * presence dot and its panel —, so opening the panel is opening a 32px `<div>` that was already there.
  */
 function Column() {
-  const { data, error, loading, refetch } = useAction(ListAction, { measure: false })
+  const { data, error, loading } = useAction(ListAction, { measure: false })
   const [creating, setCreating] = useState(false)
+  // The last full reading: its rows are the ones on screen (the cheap read of mounting is only what
+  // paints before it comes), and each row carries the time its own host answered.
+  const [section, setSection] = useState<Section>()
   // The wave: what each host that is up is doing, by project, with the time of each measurement. It is
-  // remade on mounting, on entering the rail (at most once every 15 s), on ⟳ and after every action — and
-  // never by a timer: the indicator says when it is from, and a new reading corrects it.
+  // remade on mounting, on entering the rail (at most once every 15 s), when the window regains the
+  // focus, on ⟳ and after every action — and never by a timer: the indicator says when it is from, and a
+  // new reading corrects it.
   const [measurements, setMeasurements] = useState<Record<string, Measurement>>({})
   const [measuring, setMeasuring] = useState(false)
+  const [failed, setFailed] = useState<string>()
   const last = useRef(0)
 
   const readWave = useCallback(async (force = false) => {
@@ -154,10 +166,15 @@ function Column() {
     setMeasuring(true)
     try {
       // The full reading: the `state` of each host that is up, in parallel, with the deadline that already
-      // exists.
-      setMeasurements(readingWave(await api.action(ListAction, {})))
-    } catch {
-      // The rail keeps what it already knew — and each tile's `title` says when it is from.
+      // exists. It brings the rows too — one call, not one for the list and another for the wave.
+      const full = await api.action(ListAction, {})
+      setSection(full)
+      setMeasurements(readingWave(full))
+      setFailed(undefined)
+    } catch (cause) {
+      // The rail keeps what it already knew — and the ⟳ says the reading failed and each tile's `title`
+      // says when it is from.
+      setFailed(errorMessage(cause))
     } finally {
       setMeasuring(false)
     }
@@ -172,9 +189,11 @@ function Column() {
     setMeasurements((before) => ({ ...before, [name]: measurement }))
   }, [])
 
-  // The ⟳ and every click that changes the machine re-read the list and measure everyone again.
-  const refresh = () => refetch().then(() => readWave(true))
-  const { running, stopped } = groups(data?.projects ?? [])
+  // The ⟳ and every click that changes the machine read once, and take the rows from that same reading.
+  const refresh = () => readWave(true)
+  const shown = section ?? data
+  const { running, stopped } = groups(shown?.projects ?? [])
+  const stale = failed ?? (shown ? undefined : error ? error.message : undefined)
   return (
     <nav
       aria-label="Projects"
@@ -187,21 +206,11 @@ function Column() {
           at either end is that room: without it the first tile's badge is cut flat at the top edge,
           its ring gone, and the last tile's dot sits on the bottom edge. */}
       <div className="flex w-full min-h-0 flex-1 flex-col items-center gap-2 overflow-y-auto py-1.5">
-        {error ? (
-          <button
-            aria-label="The projects could not be read. Measure again"
-            className="flex size-8 items-center justify-center rounded-md border border-error/40 font-mono text-[11px] text-error outline-none hover:bg-error/10 focus-visible:ring-1 focus-visible:ring-ring"
-            onClick={() => void refresh()}
-            title={error.message}
-            type="button"
-          >
-            !
-          </button>
-        ) : (
+        {shown ? (
           <>
             {running.map((project) => (
               <Tile
-                key={project.root}
+                key={project.home ?? project.root}
                 measurement={measurements[project.name]}
                 onChanged={refresh}
                 onMeasured={storeMeasurement}
@@ -213,7 +222,7 @@ function Column() {
             )}
             {stopped.map((project) => (
               <Tile
-                key={project.root}
+                key={project.home ?? project.root}
                 measurement={measurements[project.name]}
                 onChanged={refresh}
                 onMeasured={storeMeasurement}
@@ -221,18 +230,40 @@ function Column() {
               />
             ))}
           </>
+        ) : (
+          <button
+            aria-label="The projects could not be read. Measure again"
+            className="flex size-8 items-center justify-center rounded-md border border-error/40 font-mono text-[11px] text-error outline-none hover:bg-error/10 focus-visible:ring-1 focus-visible:ring-ring"
+            onClick={() => void refresh()}
+            title={error?.message}
+            type="button"
+          >
+            !
+          </button>
         )}
       </div>
       <div className="flex shrink-0 flex-col items-center gap-1 pt-1">
         <Icon
           className={cn('size-6', (loading || measuring) && 'pointer-events-none')}
-          label="Measure the projects again"
+          label={
+            stale ? `The last reading failed (${stale}). Measure again` : 'Measure the projects again'
+          }
           onClick={() => void refresh()}
           title={
-            data ? `Measured at ${formatTime(data.at)} · measure again` : 'Measure again'
+            shown
+              ? `${stale ? `the last reading failed (${stale}) · ` : ''}measured at ${formatTime(shown.at)} · measure again`
+              : 'Measure again'
           }
         >
-          <RotateCwIcon className={cn('size-3', (loading || measuring) && 'animate-spin')} />
+          <RotateCwIcon
+            className={cn(
+              'size-3',
+              (loading || measuring) && 'animate-spin',
+              // A reading that failed leaves its mark: the tiles stay (they are what was known), and the
+              // button says the last read did not come.
+              stale && 'text-error',
+            )}
+          />
         </Icon>
         <Icon
           className="size-6"
@@ -242,7 +273,7 @@ function Column() {
         >
           <PlusIcon className="size-3.5" />
         </Icon>
-        <SplashButton onChanged={refresh} splash={data?.splash} />
+        <SplashButton onChanged={refresh} splash={shown?.splash} />
       </div>
       <NewProject onChanged={refresh} onOpenChange={setCreating} open={creating} />
     </nav>
@@ -296,7 +327,7 @@ function SplashButton({
       disabled={splash === undefined || pending}
       label={label}
       onClick={() => void toggle()}
-      title={label}
+      title={`${label} — turning it changes the extension bundle, so every open window reloads`}
     >
       {pending ? (
         <LoaderCircleIcon className="size-3 animate-spin" />
@@ -338,7 +369,13 @@ function Tile({
   const frame = useRef<HTMLDivElement>(null)
   // Closing waits an instant: the pointer that crosses the gap to the panel does not close it on the way.
   const exit = useRef<ReturnType<typeof setTimeout>>(undefined)
-  useEffect(() => () => clearTimeout(exit.current), [])
+  // Opening waits too: crossing the left edge of the window on the way somewhere else must not open a
+  // panel of 240px over the conversation.
+  const opening = useRef<ReturnType<typeof setTimeout>>(undefined)
+  useEffect(() => () => {
+    clearTimeout(exit.current)
+    clearTimeout(opening.current)
+  }, [])
   const running = project.running !== undefined
   const port = portOf(project.running?.url)
   const link = linkOf(project)
@@ -399,16 +436,22 @@ function Tile({
   }
 
   /**
-   * The pointer or the focus came in: the panel opens (if it was already open, the pending closing is
-   * cancelled).
+   * The pointer or the focus came in: the panel opens after `OPEN_DELAY` (if it was already open, the
+   * pending closing is cancelled). The delay is what keeps passing over the rail from opening panels.
    */
   const enter = () => {
     clearTimeout(exit.current)
-    if (!panelOpen) openPanel()
+    if (panelOpen || opening.current) return
+    opening.current = setTimeout(() => {
+      opening.current = undefined
+      openPanel()
+    }, OPEN_DELAY)
   }
 
   /** It left the tile and the panel: closes in 150 ms, so crossing the gap does not count as leaving. */
   const leave = () => {
+    clearTimeout(opening.current)
+    opening.current = undefined
     clearTimeout(exit.current)
     exit.current = setTimeout(close, 150)
   }
@@ -418,6 +461,15 @@ function Tile({
     setPanelOpen(false)
     setConfirm(undefined)
   }
+
+  // The panel is anchored where it opened: a scroll (of the rail or of anything behind it) would leave tile
+  // and panel apart, so it closes instead of pointing at the wrong place.
+  useEffect(() => {
+    if (!panelOpen) return undefined
+    const onScroll = () => close()
+    document.addEventListener('scroll', onScroll, { capture: true, passive: true })
+    return () => document.removeEventListener('scroll', onScroll, { capture: true })
+  }, [panelOpen])
 
   // `Esc` closes the panel even when it opened with the pointer alone (no focus inside the tile), which is
   // the case in which no `onKeyDown` of the tile would arrive. Nothing is prevented: whoever listens to
@@ -544,6 +596,16 @@ function Tile({
               <span className="truncate font-mono text-[10px] text-muted-foreground/70" title={project.root}>
                 {project.root}
               </span>
+              {/* Which home the actions address: two homes can be the same project, and the name is what
+                  the actions speak. */}
+              {project.home && (
+                <span
+                  className="truncate font-mono text-[9.5px] text-muted-foreground/50"
+                  title={`the actions on this tile address ${project.home}`}
+                >
+                  {homeLabel(project.home)}
+                </span>
+              )}
             </div>
             <div className="flex items-baseline gap-1.5 font-mono text-[10.5px]">
               <span className={running ? 'text-success' : 'text-muted-foreground/70'}>{state}</span>
@@ -573,6 +635,13 @@ function Tile({
               )}
             </div>
             {running && <MeasurementPanel measurement={measurement} measuring={measuring} />}
+            {/* A row that is not running can still have something to say: a lock that names no address
+                of this machine is not a host the tile can open, and the panel says why. */}
+            {!running && project.reason && (
+              <p className="font-mono text-[10.5px] leading-relaxed break-words text-muted-foreground/80">
+                unavailable — {project.reason}
+              </p>
+            )}
             <div className="flex items-center gap-1">
               <Button
                 className="h-6 gap-1 px-1.5 text-[11px] text-muted-foreground"
@@ -647,9 +716,9 @@ function Tile({
 
 /**
  * The two indicators in the tile's corner, with the semantics and the classes of the app's mark
- * (`AgentMark`): the presence dot — pulsing while it works, green idle, grey stopped, hollow when the host
- * did not answer — and, when there is a question without an answer, the number in amber in the top corner.
- * The whole sentence is in the tile's `title`/`aria-label`; here nothing is read by a screen reader.
+ * (`AgentMark`): the presence dot — pulsing while it works, green up and idle, grey stopped, hollow when the
+ * host did not answer — and, when there is a question without an answer, the number in amber in the top
+ * corner. The whole sentence is in the tile's `title`/`aria-label`; here nothing is read by a screen reader.
  */
 function Signals({ dot, questionBadge }: { dot: Presence; questionBadge: string | undefined }) {
   return (
@@ -950,7 +1019,11 @@ function PhoneList() {
           </div>
         ) : (
           data?.projects.map((project) => (
-            <Row key={project.root} onChanged={refresh} project={project} />
+            <Row
+              key={project.home ?? project.root}
+              onChanged={refresh}
+              project={project}
+            />
           ))
         )}
       </CollapsibleContent>

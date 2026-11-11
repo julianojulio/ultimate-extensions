@@ -13,12 +13,6 @@ import { createHash } from 'node:crypto'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import type { Measurement, Project, Section } from './types.ts'
 
-/** The first port tried when bringing a host up. */
-export const FIRST_PORT = 4747
-
-/** How many ports are tried from there: beyond that it is not a missing port, it is something else. */
-export const PORT_ATTEMPTS = 100
-
 /**
  * The state of the host, in a word: the panel says `running` or `stopped`, because it does not fit in a
  * 32px tile.
@@ -40,6 +34,40 @@ export function portOf(url: string | undefined): string | undefined {
   } catch {
     return undefined
   }
+}
+
+/**
+ * A port, when it is one: a whole number from 1 to 65535. A lock is written by another process, so what
+ * it says is third-party input — `"4748@evil.com"` inside the URL template becomes a host of someone
+ * else's choosing, and a `fetch` or an `href` goes there.
+ */
+export function lockPort(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 65535)
+    return undefined
+  return value
+}
+
+/**
+ * The address of a host, when it is a host of this machine: `http` (not `https`, not a scheme that
+ * redirects), loopback, with a real port and nothing else in the URL. A lock is third-party input, and
+ * `http://127.0.0.1:4748@evil.com` is a URL for `evil.com` — it must not reach a `fetch` or an `href`.
+ * What does not pass is refused, and the row says the lock names no address of this machine.
+ */
+export function hostOrigin(url: string | undefined): string | undefined {
+  if (!url) return undefined
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return undefined
+  }
+  if (parsed.protocol !== 'http:') return undefined
+  if (parsed.hostname !== '127.0.0.1' && parsed.hostname !== 'localhost') return undefined
+  // `user@host` and `user:pass@host` are another destination with the loopback in the user name.
+  if (parsed.username || parsed.password) return undefined
+  if (parsed.pathname !== '/' || parsed.search || parsed.hash) return undefined
+  const port = lockPort(Number(parsed.port))
+  return port === undefined ? undefined : parsed.origin
 }
 
 /** A number that can be shown: whole, finite and not negative. The rest is not a measurement. */
@@ -152,6 +180,16 @@ export function absolutePath(value: string, home: string): string | undefined {
 }
 
 /**
+ * A home as the tile's panel shows it: `~/.ultimate/projects/app-1a2b3c4d` for the central homes, and
+ * the whole path for a home somewhere else (an instance with its own `ULTIMATE_HOME`) — the panel
+ * says which home an action addresses, so it must not pretend two different homes are the same.
+ */
+export function homeLabel(home: string): string {
+  const central = /(?:^|\/)\.ultimate\/projects\/([^/]+)$/.exec(home)
+  return central ? `~/.ultimate/projects/${central[1]}` : home
+}
+
+/**
  * The central home of a new project, `<home>/.ultimate/projects/<name>-<8 hex of the path's sha256>`.
  * It is the same calculation as `server/project.ts:projectHome`; a new project does not register itself
  * by hand — the host running in that folder is born with this home, and that is why the tile appears
@@ -173,9 +211,15 @@ function shellWord(value: string): string {
   return /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`
 }
 
-/** The `argv` with which this extension brings a host up: the project, the chosen port, and no window. */
-export function startArgs(root: string, port: number): string[] {
-  return [root, '--port', String(port), '--no-open']
+/**
+ * The `argv` with which this extension brings a host up: the project, and no window. The port is **not**
+ * passed: `bin/ultimate.ts` chooses it (from 4747) and, with no `--port`, retries the next one when the
+ * port is taken (`EADDRINUSE`) — a port chosen from outside cannot be reserved, so two starts at the
+ * same instant would pick the same one. The port actually taken is read from the lock once the host
+ * publishes it.
+ */
+export function startArgs(root: string): string[] {
+  return [root, '--no-open']
 }
 
 /** The program that is run: the `bin/ultimate.ts` of the clone that serves this window. */
@@ -184,18 +228,33 @@ export function startProgram(ultimateRoot: string): string {
 }
 
 /**
- * The first free port from `first`, decided by whoever knows how to listen (`free` tries to open the
- * port on loopback). With no free port in the range, it fails naming the range — the row shows the
- * error instead of a link that does not answer.
+ * One row per project. A home outside `~/.ultimate/projects` — a second instance of the same project
+ * with its own `ULTIMATE_HOME` — is the same project: two tiles with the same `root`, and every action
+ * addressing whichever home came first. The row kept is this window's; among the others, the first.
+ * Order is preserved, with the kept row where the project first appeared: the list and the actions that
+ * look a project up by name must agree on which home they mean.
  */
-export async function choosePort(
-  free: (port: number) => Promise<boolean> | boolean,
-  first = FIRST_PORT,
-  attempts = PORT_ATTEMPTS,
-): Promise<number> {
-  for (let port = first; port < first + attempts && port <= 65535; port++)
-    if (await free(port)) return port
-  throw new Error(`No free port from ${first} (${attempts} tried)`)
+export function uniqueByRoot<T extends { root?: string; current: boolean }>(
+  projects: readonly T[],
+): T[] {
+  const kept = new Map<string, T>()
+  for (const project of projects) {
+    if (!project.root) continue
+    const seen = kept.get(project.root)
+    if (!seen || (project.current && !seen.current)) kept.set(project.root, project)
+  }
+  const emitted = new Set<string>()
+  const rows: T[] = []
+  for (const project of projects) {
+    if (!project.root) {
+      rows.push(project)
+      continue
+    }
+    if (emitted.has(project.root)) continue
+    emitted.add(project.root)
+    rows.push(kept.get(project.root)!)
+  }
+  return rows
 }
 
 /**
@@ -295,7 +354,9 @@ export function readingWave(section: Section): Record<string, Measurement> {
       working: measured(project.working) ?? null,
       openQuestions: measured(project.openQuestions) ?? null,
       ...(project.reason ? { reason: project.reason } : {}),
-      at: section.at,
+      // Each row carries the time **its own** host answered: a wave with a host that took 3 s must not
+      // make the other tiles claim a reading 3 s older than it is.
+      at: project.measuredAt ?? section.at,
     }
   }
   return measurements

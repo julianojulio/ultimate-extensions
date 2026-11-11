@@ -8,6 +8,12 @@ export interface Project {
   name: string
   /** The full path, which goes in the tile's panel. */
   root: string
+  /**
+   * The home this row — and every action that speaks its name — addresses. Two homes can be the same
+   * project (an instance with its own `ULTIMATE_HOME`): the rail keeps one tile per project, and the
+   * panel says which home it is.
+   */
+  home?: string
   /** The project of this window. */
   current: boolean
   /**
@@ -23,7 +29,14 @@ export interface Project {
   working?: number | null
   /** Questions of the panel without an answer in that host, with the same rule as `working`. */
   openQuestions?: number | null
-  /** Why it did not answer; it goes in the panel, not on the tile. */
+  /**
+   * When **this** row's counts were read: each host answers in its own time, so a slow one does not
+   * make the others claim an older reading. The wave falls back to the section's time when it is
+   * absent.
+   */
+  measuredAt?: string
+  /** Why it did not answer, or why its lock names no address of this machine: it goes in the panel, not on
+   * the tile. */
   reason?: string
   /**
    * `ultimate <path>`, the command that brings the project up by hand. Shown and copied, never

@@ -9,10 +9,11 @@
  *
  * `list` shows this machine's projects (`host.projects()`: the central homes of
  * `~/.ultimate/projects`, with the URL of those that are up). The rail opens with
- * `list({ measure: false })` — no trip to another host, the cheap read that draws the tiles — and then
+ * `list({ measure: false })` — no trip to another host, the cheap read that paints the tiles — and then
  * makes a wave of full `list()` reads for the presence dot and the question count: on opening, on
- * entering the rail with the pointer (at most once every 15 s), on the refresh button and after each
- * action. The panel's `measure` asks **that** host when the panel opens. Neither the `busy` nor another
+ * entering the rail with the pointer and when the window regains the focus (at most once every 15 s for
+ * each of those), on the refresh button and after each action. The panel's `measure` asks **that** host
+ * when the panel opens. Neither the `busy` nor another
  * project's questions are anywhere on disk — the
  * conversation list each host publishes keeps neither the task graph nor the question box —, so the
  * question goes by HTTP to that project's own host, on loopback, and it answers about itself
@@ -27,16 +28,21 @@
  *    brings it up; a live pid's lock is "already running on :N" and the click does nothing.
  * 2. **The host is born detached** (`spawn` with `detached`, no tty): a child of the host that started
  *    it would die on its restart.
- * 3. **The port is the first free one from 4747, and the answer is the health check.** The link is
- *    returned only when the port answers; what does not come up in the deadline is terminated, and the
- *    error goes to the tile's panel.
+ * 3. **The port belongs to the host that took it.** The extension does not choose it and does not pass
+ *    `--port`: `bin/ultimate.ts` picks it (from 4747), retries the next one when it is taken and
+ *    publishes the one it got in the lock. Success is declared only when the lock names the pid this
+ *    extension spawned, that pid is alive and the port answered — a port that answers without our lock
+ *    is somebody else's host, and is reported as a failure with the reason in the tile's panel. What
+ *    does not come up in the deadline is terminated.
  * 4. **Stopping kills only the pid of that project's lock** and checks that the lock is gone: no
  *    `pkill`, no killing by port. A host this extension did not bring up asks for confirmation in the
  *    tile's panel.
  *
  * The true state is always the re-read lock, never a list in memory: the extension may reload between
  * one action and the other. There is no poll — the screen reads on opening and again on the refresh
- * button.
+ * button. `stop`, `create` and `splash` are **user actions**: an agent calling the extension cannot
+ * stop a host, create one or flip this machine's splash behind the screen (`list`, `measure`, `state`
+ * and `start` remain callable).
  *
  * Outside the homes of the projects it brought up, this extension writes **one** file only: this
  * machine's `~/.ultimate/settings.json`, when the button at the bottom of the rail turns the splash
@@ -49,6 +55,7 @@ import type { ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { closeSync, openSync } from 'node:fs'
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -58,7 +65,6 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises'
-import { createServer } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -71,9 +77,11 @@ import {
   absolutePath,
   command,
   stopDecision,
-  choosePort,
+  hostOrigin,
+  lockPort,
   projectHome,
   startProgram,
+  uniqueByRoot,
   userSettings,
   splashEnabled,
 } from './projects.ts'
@@ -92,7 +100,7 @@ export default defineExtension({ name: 'projects' })
 /** How long another project's host is given to answer before it is said not to have answered. */
 const WAIT = 3000
 
-/** The deadline of the health check of a host that has just been brought up. */
+/** The deadline of the whole bring-up: the lock, then the answer on that port. */
 const START_WAIT = 20000
 
 /** How long the SIGTERM is given before escalating to SIGKILL. */
@@ -126,6 +134,8 @@ interface Context {
     /** This host's conversations, with the `busy` of the live task graph. */
     conversations(): readonly { busy: boolean }[]
     need<S>(api: { name: string }): S
+    /** A value shared with the next load of this extension (the semaphore model, the write queue). */
+    resource<T>(key: string, create: () => T): T
   }
 }
 
@@ -134,6 +144,8 @@ interface Measurements {
   working: number | null
   openQuestions: number | null
   reason?: string
+  /** When this row was measured: each host answers in its own time. */
+  at?: string
 }
 
 /** How many conversations of this host are working now. */
@@ -164,14 +176,15 @@ function reason(error: unknown): string {
 
 /**
  * Asks another host of this machine how many of its conversations are working and how many questions wait
- * for an answer. The target's `Origin` is what its `admit` accepts on loopback; a host that does not
- * answer (or does not have this extension) returns an error, and whoever called shows `unavailable`.
+ * for an answer. `origin` is an address that already passed `hostOrigin`: this extension refuses to make
+ * a request to anything a lock could talk it into. The target's `Origin` is what its `admit` accepts on
+ * loopback; a host that does not answer (or does not have this extension) returns an error, and whoever
+ * called shows `unavailable`.
  */
 async function ask(
-  url: string,
+  origin: string,
   signal: AbortSignal,
 ): Promise<{ working: number | null; openQuestions: number | null }> {
-  const origin = new URL(url).origin
   const response = await fetch(`${origin}/api/extensions/projects/actions/state`, {
     method: 'POST',
     headers: { Origin: origin, 'Content-Type': 'application/json' },
@@ -196,20 +209,27 @@ function asCount(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
 }
 
-/** A row of the section from what was measured: it never invents a number that did not come. */
+/**
+ * A row of the section from what was measured: it never invents a number that did not come, and it never
+ * hands the screen an address that did not pass `hostOrigin` — not to fetch, not to link.
+ */
 function toRow(project: HostProject, measurements?: Measurements): Project {
   const cmd = command(project.root)
+  const origin = project.running ? hostOrigin(project.running.url) : undefined
+  const reason = measurements?.reason ?? (project.running && !origin ? REFUSED_LOCK : undefined)
   return {
     name: project.name,
     root: project.root ?? '',
+    home: project.home,
     current: project.current,
-    ...(project.running ? { running: project.running } : {}),
+    ...(project.running && origin ? { running: { pid: project.running.pid, url: origin } } : {}),
     ...(cmd ? { command: cmd } : {}),
+    ...(reason ? { reason } : {}),
     ...(measurements
       ? {
           working: measurements.working,
           openQuestions: measurements.openQuestions,
-          ...(measurements.reason ? { reason: measurements.reason } : {}),
+          ...(measurements.at ? { measuredAt: measurements.at } : {}),
         }
       : {}),
   }
@@ -225,12 +245,16 @@ function nameArgument(args: JsonValue): string {
   return value.trim()
 }
 
-/** The project by name, read from disk now (`host.projects()` reads the lock on every call). */
+/** The project by name, read from disk now (`host.projects()` reads the lock on every call). The list is
+ * the one the rail shows — one row per project — so a name addresses the same home the tile does. */
 async function findProject(ctx: Context, name: string): Promise<HostProject> {
-  const project = (await ctx.host.projects()).find((item) => item.name === name)
+  const project = uniqueByRoot(await ctx.host.projects()).find((item) => item.name === name)
   if (!project) throw new Error(`Unknown project ${JSON.stringify(name)}`)
   return project
 }
+
+/** What a lock that names no address of this machine is reported as. */
+const REFUSED_LOCK = 'the lock names no port of this machine'
 
 /** Is the pid alive? A process of another owner (EPERM) counts as alive. */
 function alive(pid: number): boolean {
@@ -242,7 +266,9 @@ function alive(pid: number): boolean {
   }
 }
 
-/** A home's lock, re-read now: a `pid` with no live process is still a lock, but it is not a host. */
+/** A home's lock, re-read now: a `pid` with no live process is still a lock, but it is not a host. The
+ * port is the only part of the lock that ends up in a URL, so it is validated here: `4748@evil.com`
+ * inside the template would be another host's address. */
 async function readLock(home: string): Promise<{ pid: number; port?: number } | undefined> {
   try {
     const parsed = JSON.parse(await readFile(join(home, 'ultimate.lock'), 'utf8')) as {
@@ -251,7 +277,8 @@ async function readLock(home: string): Promise<{ pid: number; port?: number } | 
     }
     if (typeof parsed.pid !== 'number' || !Number.isSafeInteger(parsed.pid) || parsed.pid < 1)
       return undefined
-    return { pid: parsed.pid, ...(typeof parsed.port === 'number' ? { port: parsed.port } : {}) }
+    const port = lockPort(parsed.port)
+    return { pid: parsed.pid, ...(port === undefined ? {} : { port }) }
   } catch {
     return undefined
   }
@@ -314,18 +341,44 @@ async function readSettings(): Promise<{ settings?: Record<string, unknown>; err
 /**
  * Writes the settings through a temporary beside it and a `rename`: a half JSON does not exist for whoever
  * reads the file in the middle of the way. If the file is a link (settings in dotfiles), it is the target
- * that is rewritten — the link stays. The JSON is written normalised, in two spaces: the formatting from
- * before is lost.
+ * that is rewritten — the link stays. The **mode** of the file survives too: `rename` replaces the inode,
+ * so without this a `0600` settings would come back with `0666 & ~umask`. The JSON is written normalised,
+ * in two spaces: the formatting from before is lost.
  */
 async function writeSettings(path: string, settings: Record<string, unknown>) {
   const target = await realpath(path).catch(() => path)
   await mkdir(dirname(target), { recursive: true })
+  // A file that does not exist yet is born private, as the core creates it.
+  const mode = await stat(target).then(
+    (info) => info.mode & 0o777,
+    () => 0o600,
+  )
   const temporary = join(dirname(target), `.${basename(target)}.${randomUUID()}.tmp`)
   try {
-    await writeFile(temporary, JSON.stringify(settings, null, 2) + '\n', { flag: 'wx' })
+    await writeFile(temporary, JSON.stringify(settings, null, 2) + '\n', { flag: 'wx', mode })
+    // The umask narrows what `writeFile` is asked for; the file keeps exactly the mode it had.
+    await chmod(temporary, mode)
     await rename(temporary, target)
   } finally {
     await rm(temporary, { force: true })
+  }
+}
+
+/**
+ * The writes to the settings file, one at a time and in order: this extension writes `splash`, the model
+ * settings write other keys, and two read-modify-write passes in the middle of each other lose one of
+ * them in silence. The queue is a `host.resource`, so a hot reload keeps the same one.
+ */
+async function serialised<T>(ctx: Context, path: string, work: () => Promise<T>): Promise<T> {
+  const queue = ctx.host.resource('projects.settings-writes', () => new Map<string, Promise<unknown>>())
+  const previous = queue.get(path) ?? Promise.resolve()
+  const done = previous.then(work, work)
+  queue.set(path, done)
+  try {
+    return await done
+  } finally {
+    // Nobody queued behind this one: the map does not grow with every write.
+    if (queue.get(path) === done) queue.delete(path)
   }
 }
 
@@ -388,22 +441,15 @@ function launch(
 }
 
 /**
- * Does the port answer? The health check of a host that has just been brought up is the HTTP answer, not
- * the bind.
+ * Does the port answer? One try, with the short deadline: the health of a host that has just been brought
+ * up is the HTTP answer, not the bind. Until the core opens, the supervisor holds the connection without
+ * answering, so the deadline decides that one try.
  */
-async function health(url: string, exited: () => string | undefined): Promise<string | undefined> {
-  const deadline = Date.now() + START_WAIT
-  for (;;) {
-    try {
-      // Until the core opens, the supervisor holds the connection without answering: the deadline decides.
-      if ((await fetch(`${url}/`, { signal: AbortSignal.timeout(1500) })).ok) return undefined
-    } catch {
-      // Not answering yet.
-    }
-    const reason = exited()
-    if (reason) return reason
-    if (Date.now() > deadline) return `no answer in ${START_WAIT / 1000}s`
-    await sleep(150)
+async function answers(url: string): Promise<boolean> {
+  try {
+    return (await fetch(`${url}/`, { signal: AbortSignal.timeout(1500) })).ok
+  } catch {
+    return false
   }
 }
 
@@ -414,7 +460,8 @@ async function logTail(log: string): Promise<string> {
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
-  // The error that matters is the line the process names; the stack below it is noise.
+  // The **first** line the process names as an error is the one that says why; the stack below it is
+  // noise, and the last lines are usually the crash handler's.
   const error = lines.find((line) => /^(?:Error|\[error\])/.test(line))
   return (error ?? lines.slice(-2).join(' · ')).slice(0, 240)
 }
@@ -480,13 +527,22 @@ async function shutDown(home: string, pid: number) {
     throw new Error(`pid ${pid} only stopped with SIGKILL: its lock file was left behind`)
 }
 
-/** The port that can be opened on loopback now. */
-function freePort(port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const server = createServer()
-    server.once('error', () => resolve(false))
-    server.listen(port, '127.0.0.1', () => server.close(() => resolve(true)))
-  })
+/** The port a project's lock publishes, when it is a port of this machine: the one address this extension
+ * will ask: `http://127.0.0.1:<port>`. */
+function publishedPort(project: HostProject): number | undefined {
+  const origin = project.running ? hostOrigin(project.running.url) : undefined
+  return origin === undefined ? undefined : Number(new URL(origin).port)
+}
+
+/** Is that port another project's host? A port another project's lock publishes is not ours to claim. */
+async function claimedElsewhere(
+  ctx: Context,
+  home: string,
+  port: number,
+): Promise<boolean> {
+  return (await ctx.host.projects()).some(
+    (project) => project.home !== home && publishedPort(project) === port,
+  )
 }
 
 /**
@@ -543,6 +599,20 @@ async function discardHome(home: string) {
  * (`newFolder`) writes the log in a temporary directory and only gains the pid's record after answering —
  * the home is the host's, not this extension's.
  */
+/**
+ * Brings a project's host up and only returns when **our** host answers on the port its own lock publishes.
+ *
+ * The port is not chosen here (see `startArgs`): the program takes it and writes it in the lock, which is
+ * the only statement of "this address is mine". So the loop waits for the lock to name the pid just
+ * spawned **twice in a row** — the supervisor first writes the port it asked for and then the one it got
+ * after listening, and only the second one answers for this project — and only then asks the port. The
+ * success condition is `owner.pid === pid && alive(pid)` plus "no other project of this machine publishes
+ * that port": a port that answers without our lock is somebody else's host, it is reported as a failure,
+ * and the process this extension started is terminated.
+ *
+ * A project that has no home yet (`newFolder`) writes the log in a temporary directory; the home is the
+ * host's, not this extension's, and a start that never became a project does not leave one behind.
+ */
 async function bringUp(
   ctx: Context,
   project: HostProject,
@@ -550,10 +620,9 @@ async function bringUp(
 ): Promise<Project> {
   const root = project.root
   if (!root) throw new Error(`No path for ${project.name}`)
-  const port = await choosePort(freePort)
   const child = launch(
     process.execPath,
-    [startProgram(ctx.host.ultimateRoot), ...startArgs(root, port)],
+    [startProgram(ctx.host.ultimateRoot), ...startArgs(root)],
     { cwd: root, env: environment(project.home), log: options.log },
   )
   const pid = child.pid
@@ -566,33 +635,50 @@ async function bringUp(
   })
   // Without a pid the process was not even born, and the project's path is what usually is missing.
   if (pid === undefined) throw new Error(`Could not start ${project.name} in ${root}`)
-  // Written right after the spawn: the window between the two is the only case in which the host stays
-  // without a record — and the worst it costs is one extra confirmation click (see README).
-  if (!options.newFolder) await remember(project.home, pid, port)
-  const url = `http://127.0.0.1:${port}`
-  const failure = await health(url, () => output)
-  // The host that answers may not be ours: an earlier click, or another process, got there first.
-  const owner = await readLock(project.home)
-  const other = owner && owner.pid !== pid && alive(owner.pid) ? owner : undefined
-  if (failure !== undefined && !other) {
+  const deadline = Date.now() + START_WAIT
+  /** Nothing that did not become a host keeps what it wrote: the process, the record, and the home of a
+   * folder that never became a project. */
+  const fail = async (cause: string): Promise<never> => {
     await terminate(pid)
     await forget(project.home, pid)
-    const tail = await logTail(options.log)
-    // A folder that did not become a project cannot leave the home the process created behind.
     if (options.newFolder) await discardHome(project.home)
-    throw new Error(
-      `${project.name} did not answer on :${port} — ${failure}${tail ? `: ${tail}` : ''}`,
-    )
+    const tail = await logTail(options.log)
+    throw new Error(`${project.name} did not come up — ${cause}${tail ? `: ${tail}` : ''}`)
   }
-  // The home exists now (whoever answers wrote the lock in it), and it is where this pid's record counts —
-  // or does not.
-  if (owner?.pid === pid) await remember(project.home, pid, port)
-  else await forget(project.home, pid)
-  const up = other ?? (owner?.pid === pid ? owner : undefined)
-  return toRow({
-    ...project,
-    running: { pid: up?.pid ?? pid, url: up?.port ? `http://127.0.0.1:${up.port}` : url },
-  })
+  /** The port the lock published on the previous pass: the same one twice is the one this host took. */
+  let seen: number | undefined
+  for (;;) {
+    const owner = await readLock(project.home)
+    // Another live host owns this home: the program refuses to start a second one, and ours exits.
+    if (owner && owner.pid !== pid && alive(owner.pid))
+      return await fail(`the home is already served by pid ${owner.pid}`)
+    if (owner?.pid === pid && owner.port !== undefined) {
+      const port = owner.port
+      if (port === seen) {
+        const url = `http://127.0.0.1:${port}`
+        if (await answers(url)) {
+          // The port answered: is it ours? The lock names it, the pid is alive, and no other project of
+          // this machine publishes that port.
+          const settled = await readLock(project.home)
+          if (
+            settled?.pid === pid &&
+            settled.port === port &&
+            alive(pid) &&
+            !(await claimedElsewhere(ctx, project.home, port))
+          ) {
+            await remember(project.home, pid, port)
+            return toRow({ ...project, running: { pid, url } })
+          }
+        }
+      } else seen = port
+    } else seen = undefined
+    if (output !== undefined) return await fail(output)
+    if (Date.now() > deadline)
+      return await fail(
+        `no lock and no answer in ${START_WAIT / 1000}s (a first boot on a cold disk can take longer: try again)`,
+      )
+    await sleep(150)
+  }
 }
 
 export const actions = {
@@ -604,26 +690,38 @@ export const actions = {
   async list(args: JsonValue, ctx: Context): Promise<Section> {
     // A home without a `project.json` (a start that died before registering) is no project of anyone's:
     // it has no path, it is neither brought up nor measured — showing its tile would lie about the machine.
-    const projects = (await ctx.host.projects()).filter((project) => project.root)
+    // Two homes of the same project are one project: the tile is one, and the actions address the home the
+    // row says.
+    const projects = uniqueByRoot((await ctx.host.projects()).filter((project) => project.root))
     // The button at the bottom of the rail says the state read now, not the one from an earlier opening.
     const splash = await splashNow()
     const at = new Date().toISOString()
     if (!wantsMeasurement(args))
       return { projects: projects.map((project) => toRow(project)), at, splash }
-    const here: Measurements = { working: workingNow(ctx), openQuestions: await countOpenQuestions(ctx) }
+    const here: Measurements = {
+      working: workingNow(ctx),
+      openQuestions: await countOpenQuestions(ctx),
+      at: new Date().toISOString(),
+    }
     const lines = await Promise.all(
       projects.map(async (project): Promise<Project> => {
         // This window's project: the measurements are this host's, with no trip at all.
         if (project.current) return toRow(project, here)
         // Stopped: there is no one to ask, and the screen shows the command in place of the measurement.
         if (!project.running) return toRow(project)
+        const origin = hostOrigin(project.running.url)
+        if (!origin) return toRow(project)
         try {
-          return toRow(project, await ask(project.running.url, ctx.signal))
+          return toRow(project, {
+            ...(await ask(origin, ctx.signal)),
+            at: new Date().toISOString(),
+          })
         } catch (error) {
           return toRow(project, {
             working: null,
             openQuestions: null,
             reason: reason(error),
+            at: new Date().toISOString(),
           })
         }
       }),
@@ -641,24 +739,27 @@ export const actions = {
    * What could not be preserved is refused **without writing**: invalid JSON, a file that is not an object,
    * an `extensions` that is not an object, a `disable` that is not a list of names — the core would reject
    * the whole file, and the user would lose the other keys. The write is through a temporary and a
-   * `rename`.
+   * `rename`, keeps the file's mode, and is serialised with the other writers of that path: two
+   * read-modify-write passes in the middle of each other would lose one of the two keys in silence.
    */
-  async splash(args: JsonValue, _ctx: Context): Promise<Splash> {
+  async splash(args: JsonValue, ctx: Context): Promise<Splash> {
     const enabled = enabledArgument(args)
     const path = userSettings(userHome())
-    const parsed = await readSettings()
-    if (parsed.error) throw new Error(parsed.error)
-    // With no file, the starting point is an empty object: turning it off creates the file, turning it on
-    // creates nothing.
-    const before = parsed.settings ?? {}
-    let after: Record<string, unknown>
-    try {
-      after = adjustSplash(before, enabled)
-    } catch (error) {
-      throw new Error(`Cannot change the splash: ${path}: ${reason(error)}. Nothing was written`)
-    }
-    // `adjustSplash` returns the same object when nothing changes: nothing is rewritten for nothing.
-    if (after !== before) await writeSettings(path, after)
+    await serialised(ctx, path, async () => {
+      const parsed = await readSettings()
+      if (parsed.error) throw new Error(parsed.error)
+      // With no file, the starting point is an empty object: turning it off creates the file, turning it on
+      // creates nothing.
+      const before = parsed.settings ?? {}
+      let after: Record<string, unknown>
+      try {
+        after = adjustSplash(before, enabled)
+      } catch (error) {
+        throw new Error(`Cannot change the splash: ${path}: ${reason(error)}. Nothing was written`)
+      }
+      // `adjustSplash` returns the same object when nothing changes: nothing is rewritten for nothing.
+      if (after !== before) await writeSettings(path, after)
+    })
     return { splash: enabled }
   },
 
@@ -669,16 +770,39 @@ export const actions = {
    */
   async measure(args: JsonValue, ctx: Context): Promise<Measurement> {
     const project = await findProject(ctx, nameArgument(args))
-    const at = new Date().toISOString()
     // This window's project: the measurements are this host's, with no trip at all.
     if (project.current)
-      return { working: workingNow(ctx), openQuestions: await countOpenQuestions(ctx), at }
+      return {
+        working: workingNow(ctx),
+        openQuestions: await countOpenQuestions(ctx),
+        at: new Date().toISOString(),
+      }
     if (!project.running)
-      return { working: null, openQuestions: null, reason: 'the host is stopped', at }
+      return {
+        working: null,
+        openQuestions: null,
+        reason: 'the host is stopped',
+        at: new Date().toISOString(),
+      }
+    const origin = hostOrigin(project.running.url)
+    if (!origin)
+      return {
+        working: null,
+        openQuestions: null,
+        reason: REFUSED_LOCK,
+        at: new Date().toISOString(),
+      }
     try {
-      return { ...(await ask(project.running.url, ctx.signal)), at }
+      // The time is the one the answer came at: a host that took 3 s must not be reported as measured 3 s
+      // ago.
+      return { ...(await ask(origin, ctx.signal)), at: new Date().toISOString() }
     } catch (error) {
-      return { working: null, openQuestions: null, reason: reason(error), at }
+      return {
+        working: null,
+        openQuestions: null,
+        reason: reason(error),
+        at: new Date().toISOString(),
+      }
     }
   },
 
@@ -696,8 +820,9 @@ export const actions = {
   },
 
   /**
-   * Brings a stopped project's host up, on the first free port; a host that already runs is not touched —
-   * the row comes back as it is, and the tile's panel says on which port it is.
+   * Brings a stopped project's host up, on the port the host itself takes (see `bringUp`); a host that
+   * already runs is not touched — the row comes back as it is, and the tile's panel says on which port it
+   * is.
    */
   async start(args: JsonValue, ctx: Context): Promise<Project> {
     const name = nameArgument(args)
@@ -716,16 +841,19 @@ export const actions = {
    * is born with the host, not here.
    */
   async create(args: JsonValue, ctx: Context): Promise<CreateResult> {
-    const absolute = absolutePath(pathArgument(args), homedir())
+    // `~` is the home of whoever is using this Ultimate — in an isolated instance its private copy, not
+    // the system's.
+    const absolute = absolutePath(pathArgument(args), userHome())
     if (!absolute) throw new Error('Enter a full path, such as ~/src/my-project')
     const root = await realpath(absolute).catch(() => undefined)
     if (!root) throw new Error(`No such folder: ${absolute}`)
     const info = await stat(root).catch(() => undefined)
     if (!info?.isDirectory()) throw new Error(`Not a folder: ${root}`)
-    const projects = await ctx.host.projects()
+    const projects = uniqueByRoot(await ctx.host.projects())
     const existing = projects.find((project) => project.root === root)
     if (existing) {
-      if (existing.running || existing.current)
+      const origin = existing.running ? hostOrigin(existing.running.url) : undefined
+      if ((existing.running && origin) || existing.current)
         return { created: false, project: toRow(existing) }
       return {
         created: false,
@@ -772,13 +900,10 @@ export const actions = {
     const project = await findProject(ctx, name)
     if (project.current) throw new Error(`${name} runs this window: stop it from another window`)
     const decision = stopDecision(project.running, await remembered(project.home), confirm)
-    if (decision.action === 'confirm')
-      return {
-        stopped: false,
-        needsConfirm: true,
-        pid: decision.pid,
-        ...(project.running?.url ? { url: project.running.url } : {}),
-      }
+    if (decision.action === 'confirm') {
+      const url = project.running ? hostOrigin(project.running.url) : undefined
+      return { stopped: false, needsConfirm: true, pid: decision.pid, ...(url ? { url } : {}) }
+    }
     if (decision.action === 'stop') {
       await shutDown(project.home, decision.pid)
       await forget(project.home, decision.pid)
@@ -786,3 +911,12 @@ export const actions = {
     return { stopped: true, project: toRow(await findProject(ctx, name)) }
   },
 }
+
+/**
+ * The actions only a click may take: stopping a host, creating one, and turning this machine's splash
+ * animation on or off. An agent calling the extension cannot do them behind the screen — which is also
+ * what makes the confirmation of `stop` mean something, since `confirm: true` from an agent is not a
+ * person saying yes. `list`, `measure`, `state` and `start` stay open: the rail, the phone and another
+ * project's window read them, and a host that is down is brought up by whoever needs it.
+ */
+export const userActions = ['stop', 'create', 'splash']

@@ -38,7 +38,6 @@ import {
   command,
   workingCount,
   stopDecision,
-  choosePort,
   groups,
   projectHome,
   initials,
@@ -50,10 +49,13 @@ import {
   questions,
   canStop,
   portOf,
-  FIRST_PORT,
+  homeLabel,
+  hostOrigin,
+  lockPort,
   presence,
   startProgram,
   splashLabel,
+  uniqueByRoot,
   userSettings,
   splashEnabled,
   hasMeasurement,
@@ -268,34 +270,62 @@ test('the home of a new project is <home>/.ultimate/projects/<name>-<8 hex>', ()
   assert.match(projectHome('/a/novo', '/tmp/h'), /^\/tmp\/h\/\.ultimate\/projects\/novo-[0-9a-f]{8}$/)
 })
 
-test('the host comes up in the project, on the chosen port and without opening a window', () => {
-  assert.deepEqual(startArgs('/projects/robsoncosta', 4748), [
-    '/projects/robsoncosta',
-    '--port',
-    '4748',
-    '--no-open',
-  ])
+test('the host comes up in the project, without a window and without a port chosen here', () => {
+  // No `--port`: the program takes the port itself (from 4747, retrying the next one when it is taken)
+  // and publishes it in the lock. A port chosen from outside could not be reserved, so two starts at the
+  // same instant would pick the same one.
+  assert.deepEqual(startArgs('/projects/robsoncosta'), ['/projects/robsoncosta', '--no-open'])
   assert.equal(startProgram('/opt/ultimate'), '/opt/ultimate/bin/ultimate.ts')
 })
 
-test('the port is the first free one from 4747', async () => {
-  const seen: number[] = []
-  const free = async (port: number) => {
-    seen.push(port)
-    // 4747 and 4748 taken; the first free one is 4749.
-    return port >= 4749
-  }
-  assert.equal(await choosePort(free), 4749)
-  assert.deepEqual(seen, [4747, 4748, 4749])
-  assert.equal(FIRST_PORT, 4747)
+test('a lock\u2019s port is a whole number from 1 to 65535, and nothing else is a port', () => {
+  assert.equal(lockPort(1), 1)
+  assert.equal(lockPort(4747), 4747)
+  assert.equal(lockPort(65535), 65535)
+  for (const crooked of [0, -1, 65536, 70000, 1.5, Number.NaN, Number.POSITIVE_INFINITY, '4748', null, undefined, {}])
+    assert.equal(lockPort(crooked), undefined)
+})
 
-  // With no free port at all in the range, it fails naming the range instead of inventing one.
-  await assert.rejects(
-    () => choosePort(() => false, 4747, 3),
-    /No free port from 4747 \(3 tried\)/,
-  )
-  // The range starts where it was asked: the same probe returns another port.
-  assert.equal(await choosePort((port) => port === 4800, 4800, 1), 4800)
+test('a host\u2019s address is loopback, http, with a real port \u2014 and `user@host` is another host', () => {
+  assert.equal(hostOrigin('http://127.0.0.1:4748'), 'http://127.0.0.1:4748')
+  assert.equal(hostOrigin('http://localhost:4747'), 'http://localhost:4747')
+  // The lock is third-party input: `127.0.0.1:4748@evil.com` is a URL for `evil.com`, and a `fetch` or an
+  // `href` would go there.
+  assert.equal(hostOrigin('http://127.0.0.1:4748@evil.com'), undefined)
+  assert.equal(hostOrigin('http://user:pass@127.0.0.1:4748'), undefined)
+  assert.equal(hostOrigin('http://evil.com:4748'), undefined)
+  assert.equal(hostOrigin('https://127.0.0.1:4748'), undefined)
+  // A URL without a port, with a path, or with a crooked number is no address of a host of this machine.
+  assert.equal(hostOrigin('http://127.0.0.1'), undefined)
+  assert.equal(hostOrigin('http://127.0.0.1:0'), undefined)
+  assert.equal(hostOrigin('http://127.0.0.1:70000'), undefined)
+  assert.equal(hostOrigin('http://127.0.0.1:4748/iframe'), undefined)
+  assert.equal(hostOrigin('http://127.0.0.1:4748?x=1'), undefined)
+  assert.equal(hostOrigin('not a url'), undefined)
+  assert.equal(hostOrigin(undefined), undefined)
+})
+
+test('two homes of the same project are one row, and it is this window\u2019s', () => {
+  const scratch = { name: 'app', root: '/src/app', home: '/tmp/scratch/app', current: false }
+  const central = { name: 'app', root: '/src/app', home: '/home/j/.ultimate/projects/app-1a2b3c4d', current: false }
+  const here = { name: 'app', root: '/src/app', home: '/tmp/another/app', current: true }
+  // The tile is one; the row kept is the window's own, so the actions address the home that is on screen.
+  assert.deepEqual(uniqueByRoot([scratch, central, here]), [here])
+  // Without this window's row, the first home stays — the same order, the same address.
+  assert.deepEqual(uniqueByRoot([scratch, central]), [scratch])
+  // Different projects are all kept, in order, and a row without a path is not a duplicate of anything.
+  assert.deepEqual(uniqueByRoot([scratch, { ...central, root: '/src/other', name: 'other' }]), [
+    scratch,
+    { ...central, root: '/src/other', name: 'other' },
+  ])
+  assert.deepEqual(uniqueByRoot([]), [])
+})
+
+test('a home is shown as the central one it is, or in full when it is somewhere else', () => {
+  assert.equal(homeLabel('/home/j/.ultimate/projects/app-1a2b3c4d'), '~/.ultimate/projects/app-1a2b3c4d')
+  // A home elsewhere (an instance with its own ULTIMATE_HOME) is shown as it is: the panel says which
+  // home the action addresses, and two different homes are not the same.
+  assert.equal(homeLabel('/tmp/scratch/app'), '/tmp/scratch/app')
 })
 
 test('the stop button kills only what it started; the rest asks for confirmation', () => {
@@ -342,7 +372,10 @@ test('the dot of the tile: pulses working, green idle, grey stopped, hollow with
   assert.equal(presence(running(1), undefined), 'unavailable')
   // The host that is up and did not answer **is not idle**: it is `unavailable`, with the reason at
   // hand.
-  assert.equal(presence(running(null), measurement(null, null, { reason: 'no answer in 3s' })), 'unavailable')
+  assert.equal(
+    presence(running(null), measurement(null, null, { reason: 'no answer in 3s' })),
+    'unavailable',
+  )
   // It works even with a question open: both fit in the tile (the pulse and the number in amber).
   assert.equal(presence(running(1), measurement(1, 2)), 'working')
   // A malformed number does not become work.
@@ -398,10 +431,24 @@ test('the wave keeps one measurement per project that is up, with the time of th
     splash: true,
     projects: [
       running(2, 1),
-      { name: 'travado', root: '/t', current: false, running: { pid: 7, url: 'http://127.0.0.1:4751' }, working: null, openQuestions: null, reason: 'no answer in 3s' },
+      {
+        name: 'travado',
+        root: '/t',
+        current: false,
+        running: { pid: 7, url: 'http://127.0.0.1:4751' },
+        working: null,
+        openQuestions: null,
+        reason: 'no answer in 3s',
+      },
       stopped,
       // A project that is up and only has the question count measured does not lose its entry.
-      { name: 'soPerguntas', root: '/s', current: false, running: { pid: 8, url: 'http://127.0.0.1:4752' }, openQuestions: 3 },
+      {
+        name: 'soPerguntas',
+        root: '/s',
+        current: false,
+        running: { pid: 8, url: 'http://127.0.0.1:4752' },
+        openQuestions: 3,
+      },
     ],
   }
   const measurements = readingWave(section)
@@ -421,6 +468,22 @@ test('the wave keeps one measurement per project that is up, with the time of th
   assert.deepEqual(readingWave({ at: section.at, splash: true, projects: [running(0, 0)] }), {
     'gta2xlwifi-lineage': { working: 0, openQuestions: 0, at: section.at },
   })
+  // Each row keeps the time **its own** host answered: a slow host in the wave does not make the others
+  // claim an older reading.
+  assert.deepEqual(
+    readingWave({
+      at: section.at,
+      splash: true,
+      projects: [{ ...running(2, 1), measuredAt: '2026-11-10T03:22:40.000Z' }],
+    }),
+    {
+      'gta2xlwifi-lineage': {
+        working: 2,
+        openQuestions: 1,
+        at: '2026-11-10T03:22:40.000Z',
+      },
+    },
+  )
   // No project up: no measurement, and no invented entry.
   assert.deepEqual(readingWave({ at: section.at, splash: true, projects: [stopped] }), {})
 })
