@@ -8,7 +8,7 @@ brings it up.
 
 ## How it works
 
-One tile per project, drawn with its initials (`app_evangelho` → `AE`). This window's project comes
+One tile per project, drawn with its initials (`billing-app` → `BA`). This window's project comes
 first, then the other running ones by name, a thin line, then the stopped ones. The same order on every
 open, so no tile jumps around.
 
