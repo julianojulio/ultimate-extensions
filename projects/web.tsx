@@ -182,7 +182,11 @@ function Column() {
       data-projects-rail
       onPointerEnter={() => void readWave()}
     >
-      <div className="flex w-full min-h-0 flex-1 flex-col items-center gap-2 overflow-y-auto">
+      {/* The corners' indicators hang outside the tile — the question badge 4px above it, 1.5 more of
+          ring; the presence dot 2px below — and this box scrolls, so it clips what leaves it. The 6px
+          at either end is that room: without it the first tile's badge is cut flat at the top edge,
+          its ring gone, and the last tile's dot sits on the bottom edge. */}
+      <div className="flex w-full min-h-0 flex-1 flex-col items-center gap-2 overflow-y-auto py-1.5">
         {error ? (
           <button
             aria-label="The projects could not be read. Measure again"

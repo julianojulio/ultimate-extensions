@@ -76,7 +76,10 @@ there —, so the rail and the sidebar speak the same visual language.
 
 - **The number does not cover the initials.** It sits in the top-right corner, in the gap between the
   tiles — which are spaced 8px apart for that reason —, with the rail-coloured ring separating it from
-  the background. A `9+` above ten is the limit: the exact number of 42 questions does not change the
+  the background. The ends of the column keep the same room: the box that scrolls clips what leaves
+  it, so it has 6px of padding above the first tile and below the last — the badge hangs 4px outside
+  its tile and the presence dot 2px, and without that room the first tile's badge is cut flat at the
+  top edge. A `9+` above ten is the limit: the exact number of 42 questions does not change the
   decision of whoever looks at the rail, and too wide a number would hide the project's name.
 - **Not answering is not idle.** A running host that did not answer within the deadline stays without
   pulse and without amber, with the hollow dot — the silence of a stuck host cannot be read as calm.
