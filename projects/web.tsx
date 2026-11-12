@@ -1,8 +1,11 @@
 /**
  * The "Projects" rail on the left edge of the window: a 48px column, present on every surface, with one
  * tile per project — the hosts that are up on top, a thin line, the stopped ones below (dimmer) and the
- * ⟳, the `+` and the splash switch at the bottom. Each tile carries the app's presence dot in its corner
- * and, when there are any, the number of unanswered questions.
+ * ⟳, the `+` and the splash switch at the bottom. Inside each group the tiles are a stack: this window's
+ * project first, then the one whose rail was opened most recently — `shown` stamps it on every page load,
+ * and `list` returns the rows already in that order, so the other window you came from is the second tile.
+ * Each tile carries the app's presence dot in its corner and, when there are any, the number of unanswered
+ * questions.
  *
  * The whole block is the click target, and the port number does not appear on it: a project that is up
  * opens that project in this same tab (it is a switcher, not a peeker; ⌘/Ctrl+click opens a new tab, like
@@ -68,7 +71,6 @@ import {
 } from '@/sdk'
 import {
   workingCount,
-  groups,
   homeLabel,
   initials,
   linkOf,
@@ -92,6 +94,7 @@ import type {
   Project,
   CreateResult,
   ForgetResult,
+  Shown,
   StopResult,
   Section,
   Splash,
@@ -99,6 +102,9 @@ import type {
 
 /** `{ measure?: false }` → this machine's projects. The rail asks the cheap read: no tile shows a number. */
 const ListAction = actionRef<{ measure?: boolean }, Section>('projects', 'list')
+
+/** `{}` → this project's rail was just shown: the machine's stamp that orders the stack in every window. */
+const ShownAction = actionRef<Record<string, never>, Shown>('projects', 'shown')
 
 /** `{ name }` → what was measured in that host now, with the time. The tile's panel asks when it opens. */
 const MeasureAction = actionRef<{ name: string }, Measurement>('projects', 'measure')
@@ -158,6 +164,7 @@ function List() {
  * The column: the running ones, the thin line, the stopped ones, and at the bottom the ⟳, the `+` and the
  * splash animation's button. The tile is a single piece — the link (or the button that brings it up), the
  * presence dot and its panel —, so opening the panel is opening a 32px `<div>` that was already there.
+ * The order is the one `list` returned: this window's project, then the stack of the machine.
  */
 function Column() {
   const { data, error, loading } = useAction(ListAction, { measure: false })
@@ -203,6 +210,15 @@ function Column() {
     void readWave()
   }, [readWave])
 
+  // The rail was shown: this project is stamped in this machine's `projects-shown.json`, which is what
+  // orders every rail of the machine — come back to it from another project and this one is the first
+  // tile, that one the second. Once per page load, on mounting; it is not a gesture, so it is not on the
+  // wave. A stamp that does not come changes the order of the tiles later, never the ones on screen, so
+  // the failure is not worth a word.
+  useEffect(() => {
+    void api.action(ShownAction, {}).catch(() => undefined)
+  }, [])
+
   // Coming back to the window is exactly when the rail is looked at: the wave again, with the same ceiling
   // (inside it, `readWave` does nothing). While the window is hidden nothing is asked.
   useEffect(() => {
@@ -226,7 +242,11 @@ function Column() {
   // The ⟳ and every click that changes the machine read once, and take the rows from that same reading.
   const refresh = () => readWave(true)
   const shown = section ?? data
-  const { running, stopped } = groups(shown?.projects ?? [])
+  // The rows `list` returns are already in the order the rail draws them: this window's project, then the
+  // stack of the machine. The thin line is a split, not another ordering — the client does not sort.
+  const rows = shown?.projects ?? []
+  const running = rows.filter((project) => project.running !== undefined)
+  const stopped = rows.filter((project) => project.running === undefined)
   // This window's project answers from the host that is serving the screen: its dot is live and its
   // numbers are now, whether or not a wave ever came back.
   const measurementOf = (project: Project): Measurement | undefined => {

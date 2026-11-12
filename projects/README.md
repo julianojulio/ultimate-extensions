@@ -8,9 +8,17 @@ brings it up.
 
 ## How it works
 
-One tile per project, drawn with its initials (`billing-app` → `BA`). This window's project comes
-first, then the other running ones by name, a thin line, then the stopped ones. The same order on every
-open, so no tile jumps around.
+One tile per project, drawn with its initials (`billing-app` → `BA`). This window's project comes first,
+then the other running ones, a thin line, then the stopped ones — and inside each group the tiles are a
+**stack**: the project whose rail was opened last is the first tile, the one before it the second. That
+is what makes going back easy: switch to another project to capture something, come back, and the project
+you left is right below this one.
+
+The order is the machine's, not a window's — every window of every project reads the same stamps
+(`~/.ultimate/projects-shown.json`, below), so they all agree on what came before. A project this machine
+has no stamp for is placed by when it opened, and two with neither are ordered by name. The price of
+"always the second" is that a tile can change place: opening a project moves its tile up in the rails of
+this machine, this window's included.
 
 The dot in the corner is the project's state: grey stopped, green up and idle, pulsing while the last
 reading saw it working, hollow when the host does not answer. The number in the corner is the count of
@@ -50,7 +58,25 @@ On the phone there is no rail: the same list, compact, stays in the sidebar.
 ## Configuration
 
 Two keys of this machine's `~/.ultimate/settings.json` are this extension's: the splash switch and the
-homes the rail hides. Everything else in the file stays as it is.
+homes the rail hides. Everything else in the file stays as it is. A second file,
+`~/.ultimate/projects-shown.json`, holds the order of the tiles; it is this extension's own, and the
+settings file never mentions it.
+
+### The order of the tiles
+
+Every page load of the rail stamps its project, and that is all this file is:
+
+```json
+{ "/home/juliano/.ultimate/projects/billing-app-1a2b3c4d": 1770000000000 }
+```
+
+The key is the project's **home**, the same one the panel shows, and the value is when its rail was last
+opened, in epoch ms. `list` reads it on every reading. `shown` keeps the 100 newest homes so the file does
+not grow for ever, and writes it through a temporary and a `rename`. A file that cannot be read whole is
+treated as empty — the rail is then ordered by when each project opened, without a word about it, and
+nothing is rewritten. A home in the file that is not a project of this machine any more is simply not
+used. Deleting the file is safe: the order starts from scratch and rebuilds itself as the windows are
+opened.
 
 ### The splash animation
 
@@ -97,8 +123,10 @@ refuses without writing anything.
 
 For agents and automation, one line each:
 
-- `list` — this machine's projects with state, port and command; `{ measure: false }` skips asking the
-  other hosts.
+- `list` — this machine's projects with state, port and command, in the order the rail draws them;
+  `{ measure: false }` skips asking the other hosts.
+- `shown` — no arguments: stamps this project in `~/.ultimate/projects-shown.json`, which is what orders
+  the rail. The rail calls it once per page load.
 - `measure` — `{ name }`: that project measured now, with the time of the answer.
 - `state` — this host only: working conversations and open questions; another host asks it.
 - `start` — `{ name }`: brings that host up, and returns when it answers.

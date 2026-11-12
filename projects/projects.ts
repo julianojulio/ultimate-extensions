@@ -1,13 +1,17 @@
 /**
  * The pure calculations of the Projects rail: the initials of the tile, the two groups (running and
- * stopped), the path typed into the `+` dialog, the central home a new project will occupy, the port
- * that only the panel shows, what the stop button decides, and what the splash button and the `forget`
- * button write to this machine's settings. Nothing here reads the machine, opens a process or makes a
- * request — `projects.test.ts` covers all of it with fixtures.
+ * stopped) and the order of the stack inside them, the path typed into the `+` dialog, the central home a
+ * new project will occupy, the port that only the panel shows, what the stop button decides, and what the
+ * splash button, the `forget` button and a rail that was just shown write to this machine — the settings and
+ * the stamps file. Nothing here reads the machine, opens a process or makes a request — `projects.test.ts`
+ * covers all of it with fixtures.
  *
  * The state is never the colour alone: the rail writes `running`/`stopped` in each tile's panel, the
  * group is the position (running above the line, stopped below) and what was measured comes as a
  * number, with the time.
+ *
+ * The order is the machine's, not the window's: a page load stamps its project, and every rail of this
+ * machine puts the most recently shown one on top — the project you came from is the second tile.
  */
 import { createHash } from 'node:crypto'
 import { basename, isAbsolute, join, resolve } from 'node:path'
@@ -161,16 +165,52 @@ export interface Groups {
 }
 
 /**
- * The two groups of the rail, in the order it draws them: this window's project first among the running
- * ones, the rest by name — the same order on every open, so that a tile does not jump around.
+ * When a project was last seen, for the order: this machine's stamp of the last time its rail was opened
+ * (`shownAt`), and — for a project this machine has no stamp for — when it opened (`openedAt`). With
+ * neither, the name decides.
  */
-export function groups(projects: Project[]): Groups {
-  const byName = (a: Project, b: Project) => a.name.localeCompare(b.name)
-  const running = projects
-    .filter((project) => project.running !== undefined)
-    .sort((a, b) => Number(b.current) - Number(a.current) || byName(a, b))
-  const stopped = projects.filter((project) => project.running === undefined).sort(byName)
-  return { running, stopped }
+function recency(project: Project): number | undefined {
+  return project.shownAt ?? project.openedAt
+}
+
+/**
+ * The stack, inside a group: the most recent rail on top, the older ones below, and this window's project
+ * fixed at the top whatever its stamp says — the project you came from is the second tile, which is the
+ * whole point of the order. Two projects with no stamp at all are decided by name, so an order that owes
+ * nothing to the machine is still the same on every open.
+ */
+function stack(a: Project, b: Project): number {
+  if (a.current !== b.current) return Number(b.current) - Number(a.current)
+  const left = recency(a)
+  const right = recency(b)
+  if (left !== right) {
+    if (left === undefined) return 1
+    if (right === undefined) return -1
+    return right - left
+  }
+  return a.name.localeCompare(b.name)
+}
+
+/**
+ * The two groups of the rail, each as the stack: this window's project first, then the project shown most
+ * recently, and so on down to the ones that were never shown — the oldest `openedAt` last. The stamps are
+ * of the machine, not of a window, so every rail of this machine agrees on which project came before.
+ */
+export function groups(projects: readonly Project[]): Groups {
+  return {
+    running: projects.filter((project) => project.running !== undefined).sort(stack),
+    stopped: projects.filter((project) => project.running === undefined).sort(stack),
+  }
+}
+
+/**
+ * The same order, flat: `list` returns the rows in the order the rail draws them — this window's first, the
+ * project you came from second, stopped ones below — so the rail, the panel and the phone's compact list
+ * all read one array and none of them orders it again.
+ */
+export function ordered(projects: readonly Project[]): Project[] {
+  const { running, stopped } = groups(projects)
+  return [...running, ...stopped]
 }
 
 /**
@@ -395,6 +435,49 @@ export function readingWave(section: Section): Record<string, Measurement> {
  */
 export function userSettings(userHome: string): string {
   return join(userHome, '.ultimate', 'settings.json')
+}
+
+/**
+ * **This machine's** stamps of the rails that were opened, `<user home>/.ultimate/projects-shown.json`: `{
+ * "<home>": <epoch ms> }`. It is a hint about order, not a document — nothing breaks when it is missing or
+ * crooked, which is why it is not a key of the settings file and why the wrong one is read as empty rather
+ * than refused.
+ */
+export function shownFile(userHome: string): string {
+  return join(userHome, '.ultimate', 'projects-shown.json')
+}
+
+/**
+ * How many stamps the file keeps: the newest ones. A home that was deleted keeps its line until a hundred
+ * newer projects push it out — the file does not grow for ever, and no read of the disk is needed to know
+ * which homes still exist.
+ */
+export const SHOWN_CAP = 100
+
+/**
+ * The stamps read from the file, keeping only what is one: a home that maps to a finite, positive epoch ms.
+ * A value that is not a JSON object is no stamp at all: a crooked file orders the rail as if nothing had
+ * ever been shown, without a word and without rewriting anything.
+ */
+export function shownStamps(value: unknown): Record<string, number> {
+  if (!isObject(value)) return {}
+  const stamps: Record<string, number> = {}
+  for (const [home, at] of Object.entries(value))
+    if (typeof at === 'number' && Number.isFinite(at) && at > 0) stamps[home] = at
+  return stamps
+}
+
+/**
+ * The stamps after a rail was opened: this home gets `at`, newest first, capped at `SHOWN_CAP`. Stamping a
+ * home again moves its line instead of adding a second one, so the file has one line per project.
+ */
+export function stamped(
+  stamps: Record<string, number>,
+  home: string,
+  at: number,
+): Record<string, number> {
+  const entries = Object.entries({ ...stamps, [home]: at }).sort(([, a], [, b]) => b - a)
+  return Object.fromEntries(entries.slice(0, SHOWN_CAP))
 }
 
 /**

@@ -29,6 +29,12 @@
  * - forgetting a project writes only its **home** into `projects.hidden`, once, preserving the other
  *   keys; the `list` does not return a hidden home, and a crooked file is read as hiding nobody and
  *   refused instead of being rewritten.
+ * - the rail groups: running above the thin line, stopped below;
+ * - the rail is a **stack**: inside each group the rail shown most recently is the first tile (this
+ *   window's project always first), a project with no stamp falls back to when it opened, and only then
+ *   to its name — so the project you came from is the second tile;
+ * - the stamps are the machine's, in their own file: a missing or crooked one is read as nothing, and only
+ *   the newest hundred homes are kept;
  * - the folder of the `+` dialog becomes an absolute path with `~` expanded, and a relative path is
  *   refused instead of becoming some folder at random;
  * - the home of a new project is the same one Ultimate calculates
@@ -48,6 +54,11 @@ import {
   workingCount,
   stopDecision,
   groups,
+  ordered,
+  shownFile,
+  shownStamps,
+  stamped,
+  SHOWN_CAP,
   projectHome,
   initials,
   linkOf,
@@ -242,6 +253,106 @@ test('the rail groups: running on top, stopped below, this window’s first', ()
   )
   // With no project at all the two groups are empty, and the rail still has the `+`.
   assert.deepEqual(list([]), { running: [], stopped: [] })
+})
+
+test('the rail is a stack: the rail shown most recently is the first tile', () => {
+  const up = (name: string, shownAt?: number, openedAt?: number): Project => ({
+    name,
+    root: `/${name}`,
+    current: false,
+    running: { pid: 1, url: 'http://127.0.0.1:4748' },
+    ...(shownAt === undefined ? {} : { shownAt }),
+    ...(openedAt === undefined ? {} : { openedAt }),
+  })
+  // The stamps are of the machine: the last rail opened is the first tile, and the one before it is the
+  // second — which is the whole point of the order (`shown` writes these).
+  assert.deepEqual(
+    ordered([up('alfa', 1_000), up('beta', 3_000), up('gama', 2_000)]).map((project) => project.name),
+    ['beta', 'gama', 'alfa'],
+  )
+  // Two rails stamped at the same moment are decided by name: an order that owes nothing to the machine is
+  // still the same on every open.
+  assert.deepEqual(
+    ordered([up('zulu', 5_000), up('beta', 5_000), up('alfa', 5_000)]).map((project) => project.name),
+    ['alfa', 'beta', 'zulu'],
+  )
+  // A project this machine never stamped falls back to when it opened, and a stamp wins over that: the
+  // stamp is what was seen, `openedAt` is only how old the home is.
+  assert.deepEqual(
+    ordered([up('old', undefined, 1_000), up('new', undefined, 9_000), up('seen', 500)]).map(
+      (project) => project.name,
+    ),
+    ['new', 'old', 'seen'],
+  )
+  // Nothing at all — no stamp, no `openedAt` — is decided by name, and every stamped project is above it.
+  assert.deepEqual(
+    ordered([up('unstamped'), up('stamped', 1), up('other')]).map((project) => project.name),
+    ['stamped', 'other', 'unstamped'],
+  )
+})
+
+test('this window’s project is the first tile, however old its stamp', () => {
+  const rows: Project[] = [
+    { name: 'old-stamp', root: '/a', current: true, shownAt: 1, running: { pid: 1, url: 'http://127.0.0.1:4747' } },
+    { name: 'recent', root: '/r', current: false, shownAt: 9_000, running: { pid: 2, url: 'http://127.0.0.1:4748' } },
+  ]
+  // What serves the screen is the first tile of the column, even with a stamp from long ago: that is what
+  // makes the other one the second.
+  assert.deepEqual(ordered(rows).map((project) => project.name), ['old-stamp', 'recent'])
+})
+
+test('the stack keeps its two groups: the stopped ones stay below the thin line', () => {
+  const rows: Project[] = [
+    { name: 'stopped-new', root: '/pn', current: false, shownAt: 9_000 },
+    { name: 'up-old', root: '/pa', current: false, shownAt: 1_000, running: { pid: 1, url: 'http://127.0.0.1:4748' } },
+    { name: 'stopped-old', root: '/pv', current: false, shownAt: 2_000 },
+  ]
+  // `list` returns one flat array in the order the rail draws it: the recency orders each group, it never
+  // moves a stopped project above a running one.
+  assert.deepEqual(
+    ordered(rows).map((project) => project.name),
+    ['up-old', 'stopped-new', 'stopped-old'],
+  )
+  const { running: up, stopped } = groups(rows)
+  assert.deepEqual(up.map((project) => project.name), ['up-old'])
+  assert.deepEqual(stopped.map((project) => project.name), ['stopped-new', 'stopped-old'])
+})
+
+test('the stamps live in their own file, and a crooked one is read as nothing', () => {
+  assert.equal(shownFile('/home/juliano'), '/home/juliano/.ultimate/projects-shown.json')
+  // A home mapped to a time is a stamp; anything else in the file is not, and it is ignored without a
+  // word — this file is a hint about order, not a document anyone trusts.
+  assert.deepEqual(shownStamps({ '/h/one': 1_000, '/h/two': 2_000 }), { '/h/one': 1_000, '/h/two': 2_000 })
+  assert.deepEqual(
+    shownStamps({ '/h/one': 1_000, '/h/text': 'yesterday', '/h/zero': 0, '/h/negative': -1, '/h/nan': Number.NaN, '/h/crooked': null }),
+    { '/h/one': 1_000 },
+  )
+  // A missing file, a list, a string and a number are no stamp at all: the rail is then ordered as if
+  // nothing had ever been shown.
+  for (const crooked of [undefined, null, [], ['/h'], '/h', 42])
+    assert.deepEqual(shownStamps(crooked), {})
+})
+
+test('a rail that was shown stamps its home, newest first, and the file is capped', () => {
+  assert.deepEqual(stamped({}, '/h/one', 1_000), { '/h/one': 1_000 })
+  // Stamping again moves the line, it does not add a second one: one line per project, whatever the number
+  // of page loads.
+  assert.deepEqual(stamped({ '/h/one': 1_000, '/h/two': 500 }, '/h/one', 2_000), {
+    '/h/one': 2_000,
+    '/h/two': 500,
+  })
+  // Newest first: the file is read in that order, and the cap drops from the tail — the oldest.
+  const many = Object.fromEntries(Array.from({ length: 120 }, (_, index) => [`/h/${index}`, 1_000 + index]))
+  const kept = stamped(many, '/h/new', 10_000)
+  assert.equal(Object.keys(kept).length, SHOWN_CAP)
+  const lines = Object.entries(kept)
+  assert.equal(lines[0][0], '/h/new')
+  assert.equal(lines.at(-1)?.[0], `/h/${120 - SHOWN_CAP + 1}`)
+  // The times come newest first, without a hole: nothing is kept twice and nothing is reordered.
+  assert.deepEqual(
+    lines.map(([, at]) => at),
+    [...lines.map(([, at]) => at)].sort((a, b) => b - a),
+  )
 })
 
 test('the dialog’s path expands ~ and refuses what is not absolute', () => {

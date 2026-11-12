@@ -17,6 +17,16 @@ export interface Project {
   /** The project of this window. */
   current: boolean
   /**
+   * When this machine stamped the project as shown — the last time its rail was opened by a page load
+   * (`shown`), in epoch ms. What orders the rail; `undefined` when this machine never stamped it.
+   */
+  shownAt?: number
+  /**
+   * When the project's host last started, from its `project.json` — the order of a project this machine has
+   * no stamp for, so a project opened today is above the old ones even before any stamp exists.
+   */
+  openedAt?: number
+  /**
    * Running: the pid and the URL the host publishes in its lock. The URL is the click target of the
    * tile.
    */
@@ -64,6 +74,14 @@ export interface Section {
 /** What the `splash` action left: the animation on or off in this machine's settings. */
 export interface Splash {
   splash: boolean
+}
+
+/**
+ * What the `shown` action left: the epoch ms it stamped this project with. It is written in this machine's
+ * `~/.ultimate/projects-shown.json`, which is what orders the rail.
+ */
+export interface Shown {
+  shownAt: number
 }
 
 /**

@@ -8,7 +8,9 @@
  * in the repository, and the hot reload follows the link.
  *
  * `list` shows this machine's projects (`host.projects()`: the central homes of
- * `~/.ultimate/projects`, with the URL of those that are up). The rail opens with
+ * `~/.ultimate/projects`, with the URL of those that are up), **in the order the rail draws them**: this
+ * window's project first, then the one whose rail was shown most recently, and so on — the stack, which is
+ * what the `shown` action keeps (`projects-shown.json`). The rail opens with
  * `list({ measure: false })` — no trip to another host, the cheap read that paints the tiles — and then
  * makes a wave of full `list()` reads for the presence dot and the question count: on opening, on
  * entering the rail with the pointer and when the window regains the focus (at most once every 15 s for
@@ -44,12 +46,18 @@
  * cannot stop a host, create one, hide one from the rail or flip this machine's splash behind the screen
  * (`list`, `measure`, `state` and `start` remain callable).
  *
- * Outside the homes of the projects it brought up, this extension writes **one** file only: this
- * machine's `~/.ultimate/settings.json` — the splash animation on or off (the `splash` action) and the
- * homes the rail hides (the `forget` action, and `create` bringing one of them back). There too nothing
- * comes from memory: each action reads the file, touches only its own key (`extensions.disable`'s
- * `splash` entry, `projects.hidden`) and refuses, without writing, what the core would refuse whole —
- * invalid JSON, an `extensions` that is not an object, a `projects` that is not an object (see README).
+ * Outside the homes of the projects it brought up, this extension writes **two** files, both in this
+ * machine's `~/.ultimate/`:
+ *
+ * - `settings.json` — the splash animation on or off (the `splash` action) and the homes the rail hides
+ *   (the `forget` action, and `create` bringing one of them back). Nothing comes from memory: each action
+ *   reads the file, touches only its own key (`extensions.disable`'s `splash` entry, `projects.hidden`)
+ *   and refuses, without writing, what the core would refuse whole — invalid JSON, an `extensions` that is
+ *   not an object, a `projects` that is not an object (see README).
+ * - `projects-shown.json` — when each project's rail was last opened (`shown`), which is the order of the
+ *   tiles, and the only thing `shown` writes: the newest 100 homes, through a temporary and a `rename`, and
+ *   a file that cannot be read is treated as empty rather than repaired.
+ *
  * **Nothing is deleted**: forgetting a project only adds its home to a list.
  */
 import { spawn } from 'node:child_process'
@@ -81,6 +89,10 @@ import {
   command,
   hiddenHomes,
   isHidden,
+  ordered,
+  shownFile,
+  shownStamps,
+  stamped,
   stopDecision,
   hostOrigin,
   lockPort,
@@ -97,6 +109,7 @@ import type {
   Project,
   CreateResult,
   ForgetResult,
+  Shown,
   StopResult,
   Section,
   Splash,
@@ -124,6 +137,8 @@ interface HostProject {
   root?: string
   home: string
   current: boolean
+  /** When this project's host last started, from its `project.json`: the order of one with no stamp. */
+  openedAt?: number
   running?: { pid: number; url: string }
 }
 
@@ -137,6 +152,8 @@ interface Context {
   signal: AbortSignal
   host: {
     ultimateRoot: string
+    /** This host's project home: what `shown` stamps, and the row the rail pins at the top. */
+    home: string
     projects(): Promise<HostProject[]>
     /** This host's conversations, with the `busy` of the live task graph. */
     conversations(): readonly { busy: boolean }[]
@@ -220,7 +237,7 @@ function asCount(value: unknown): number | null {
  * A row of the section from what was measured: it never invents a number that did not come, and it never
  * hands the screen an address that did not pass `hostOrigin` — not to fetch, not to link.
  */
-function toRow(project: HostProject, measurements?: Measurements): Project {
+function toRow(project: HostProject, measurements?: Measurements, shownAt?: number): Project {
   const cmd = command(project.root)
   const origin = project.running ? hostOrigin(project.running.url) : undefined
   const reason = measurements?.reason ?? (project.running && !origin ? REFUSED_LOCK : undefined)
@@ -229,6 +246,8 @@ function toRow(project: HostProject, measurements?: Measurements): Project {
     root: project.root ?? '',
     home: project.home,
     current: project.current,
+    ...(shownAt === undefined ? {} : { shownAt }),
+    ...(typeof project.openedAt === 'number' ? { openedAt: project.openedAt } : {}),
     ...(project.running && origin ? { running: { pid: project.running.pid, url: origin } } : {}),
     ...(cmd ? { command: cmd } : {}),
     ...(reason ? { reason } : {}),
@@ -376,12 +395,48 @@ async function writeSettings(path: string, settings: Record<string, unknown>) {
 }
 
 /**
- * The writes to the settings file, one at a time and in order: this extension writes `splash`, the model
- * settings write other keys, and two read-modify-write passes in the middle of each other lose one of
- * them in silence. The queue is a `host.resource`, so a hot reload keeps the same one.
+ * This machine's stamps, read on the spot (`~/.ultimate/projects-shown.json`): a missing file is no stamp at
+ * all, and one that cannot be read whole is read as nothing — the order it gives is a hint, and a broken
+ * hint is not worth a refusal in the middle of a page load.
+ */
+async function readShown(): Promise<Record<string, number>> {
+  const text = await readFile(shownFile(userHome()), 'utf8').catch(() => '')
+  if (!text.trim()) return {}
+  try {
+    return shownStamps(JSON.parse(text))
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * The stamps file, written through a temporary beside it and a `rename`: a `list` running at that moment
+ * never reads half a JSON. Like the settings, a link here is followed — the file that is rewritten is the
+ * target, not the link. It is born private — it says which projects this machine's windows have opened —
+ * and it is created on the first page load, when the file does not exist yet.
+ */
+async function writeShown(path: string, stamps: Record<string, number>) {
+  const target = await realpath(path).catch(() => path)
+  await mkdir(dirname(target), { recursive: true })
+  const temporary = join(dirname(target), `.${basename(target)}.${randomUUID()}.tmp`)
+  try {
+    await writeFile(temporary, JSON.stringify(stamps, null, 2) + '\n', { flag: 'wx', mode: 0o600 })
+    await rename(temporary, target)
+  } finally {
+    await rm(temporary, { force: true })
+  }
+}
+
+/**
+ * The writes to a file of this extension, one at a time and in order **within this host process**: the
+ * settings (this extension writes `splash` and `projects.hidden`, the model settings write other keys) and
+ * the stamps file. Two read-modify-write passes in the middle of each other lose one of them in silence.
+ * Every project window is its own host, so a write of another window is not queued with this one — for the
+ * stamps that costs one line, which the next page load of that project writes again. The queue is keyed by
+ * the path and is a `host.resource`, so a hot reload keeps the same one.
  */
 async function serialised<T>(ctx: Context, path: string, work: () => Promise<T>): Promise<T> {
-  const queue = ctx.host.resource('projects.settings-writes', () => new Map<string, Promise<unknown>>())
+  const queue = ctx.host.resource('projects.file-writes', () => new Map<string, Promise<unknown>>())
   const previous = queue.get(path) ?? Promise.resolve()
   const done = previous.then(work, work)
   queue.set(path, done)
@@ -727,10 +782,12 @@ async function bringUp(
 
 export const actions = {
   /**
-   * This machine's projects, with the state and the command. With no argument, it measures each host that
-   * is up (it is what the phone's list shows); `{ measure: false }` is the rail's cheap read, which shows no
-   * number. A project whose home this machine hides (`projects.hidden` in the settings) is not among them:
-   * the rail draws what this returns, so hiding is all it takes.
+   * This machine's projects, with the state and the command, **in the order the rail draws them**: this
+   * window's first, then the project shown most recently, and so on, the stopped ones below. With no
+   * argument, it measures each host that is up (it is what the phone's list shows); `{ measure: false }` is
+   * the rail's cheap read, which shows no number. A project whose home this machine hides
+   * (`projects.hidden` in the settings) is not among them: the rail draws what this returns, so hiding is
+   * all it takes.
    */
   async list(args: JsonValue, ctx: Context): Promise<Section> {
     // A home without a `project.json` (a start that died before registering) is no project of anyone's:
@@ -738,8 +795,10 @@ export const actions = {
     // Two homes of the same project are one project: the tile is one, and the actions address the home the
     // row says.
     // This machine's settings are read on every call, nothing in memory: the splash button's state and the
-    // homes the rail hides come from the same file, now.
+    // homes the rail hides come from the same file, now. The stamps of the rails that were opened are read
+    // from their own file, also now: a page load in another window changes the order of this one.
     const settings = await readSettings()
+    const stamps = await readShown()
     const projects = withoutHidden(
       uniqueByRoot((await ctx.host.projects()).filter((project) => project.root)),
       hiddenHomes(settings.settings),
@@ -747,8 +806,15 @@ export const actions = {
     )
     const splash = splashEnabled(settings.settings)
     const at = new Date().toISOString()
+    // The stamp of a row is the one of **its** home; a stamp of a home that is not a project of this
+    // machine any more matches no row and is simply not used.
+    const stamp = (project: HostProject) => stamps[project.home]
     if (!wantsMeasurement(args))
-      return { projects: projects.map((project) => toRow(project)), at, splash }
+      return {
+        projects: ordered(projects.map((project) => toRow(project, undefined, stamp(project)))),
+        at,
+        splash,
+      }
     const here: Measurements = {
       working: workingNow(ctx),
       openQuestions: await countOpenQuestions(ctx),
@@ -757,27 +823,53 @@ export const actions = {
     const lines = await Promise.all(
       projects.map(async (project): Promise<Project> => {
         // This window's project: the measurements are this host's, with no trip at all.
-        if (project.current) return toRow(project, here)
+        if (project.current) return toRow(project, here, stamp(project))
         // Stopped: there is no one to ask, and the screen shows the command in place of the measurement.
-        if (!project.running) return toRow(project)
+        if (!project.running) return toRow(project, undefined, stamp(project))
         const origin = hostOrigin(project.running.url)
-        if (!origin) return toRow(project)
+        if (!origin) return toRow(project, undefined, stamp(project))
         try {
-          return toRow(project, {
-            ...(await ask(origin, ctx.signal)),
-            at: new Date().toISOString(),
-          })
+          return toRow(
+            project,
+            { ...(await ask(origin, ctx.signal)), at: new Date().toISOString() },
+            stamp(project),
+          )
         } catch (error) {
-          return toRow(project, {
-            working: null,
-            openQuestions: null,
-            reason: reason(error),
-            at: new Date().toISOString(),
-          })
+          return toRow(
+            project,
+            {
+              working: null,
+              openQuestions: null,
+              reason: reason(error),
+              at: new Date().toISOString(),
+            },
+            stamp(project),
+          )
         }
       }),
     )
-    return { projects: lines, at, splash }
+    return { projects: ordered(lines), at, splash }
+  },
+
+  /**
+   * This project's rail was just opened: it stamps this host's home in this machine's
+   * `~/.ultimate/projects-shown.json`, which is what orders the rail in every window — the project whose
+   * rail was opened last is the first tile, so coming back to this one makes it the second: where you came
+   * from. `web.tsx` calls it once per page load, when the rail mounts.
+   *
+   * It is not a user action: loading a page is not a gesture, and the only thing it writes is the order of
+   * the tiles. The write goes through a temporary and a `rename`, and the file keeps the `SHOWN_CAP` newest
+   * homes so it does not grow for ever. What cannot be read is treated as empty — this file is a hint, not
+   * a document, and a crooked one is not worth an error in the middle of a page load.
+   */
+  async shown(_args: JsonValue, ctx: Context): Promise<Shown> {
+    const path = shownFile(userHome())
+    const shownAt = await serialised(ctx, path, async () => {
+      const at = Date.now()
+      await writeShown(path, stamped(await readShown(), ctx.host.home, at))
+      return at
+    })
+    return { shownAt }
   },
 
   /**
