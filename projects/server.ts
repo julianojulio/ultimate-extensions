@@ -1284,20 +1284,22 @@ export const actions = {
   async update(_args: JsonValue, ctx: Context): Promise<UpdateReport> {
     // Nothing is aborted from outside: the click was made, and the machine's restarts are not the page's.
     const own = new AbortController().signal
+    const update = ctx.host.want<UpdateService>(Update)
+    // Look at the clone before deciding: a fetch that is due may reveal commits, and this click should bring
+    // them in rather than leave them for the next one.
+    if (update) await ctx.host.invoke('update', 'check', {}, own).catch(() => undefined)
     const clone = await cloneState(ctx)
     let pull: PullResult | undefined
     if (pullOwed(clone)) {
-      if (!ctx.host.want<UpdateService>(Update))
+      if (!update)
         throw new Error('The update extension is not enabled in this window, so the clone cannot be updated')
       const result = (await ctx.host.invoke('update', 'update', {}, own)) as PullResult | undefined
       pull = result ?? { ok: false, refused: 'the update extension answered nothing' }
       // A refusal is reported as it came, and the rest of the click does not happen.
       if (!pull.ok) return { pull, projects: [], restartSelf: false }
     }
-    // This host's own view of the clone is as old as the last check: the click asks it to look again, so a
-    // landing that nobody has looked at yet is not missed.
-    if (ctx.host.want<UpdateService>(Update))
-      await ctx.host.invoke('update', 'check', {}, own).catch(() => undefined)
+    // After the pull this host's own view is fresh (the update refreshes it); `candidatesOf` asks every other
+    // host to look again, so none of them answers with what it knew before the clone moved.
     const hosts = await candidatesOf(ctx, own)
     const now = Date.now()
     const path = restartsFile(userHome())
