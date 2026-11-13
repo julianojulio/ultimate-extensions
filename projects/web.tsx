@@ -276,6 +276,10 @@ function Column() {
   // the button appears from a reading the rail was going to make anyway.
   const restarting = rows.filter((project) => project.restart === true).length
   const updating = updateTitle({ behind: shown?.clone?.behind, restart: restarting })
+  // The panel of the last click is worth reading even when the button's reason is gone by the time it ends —
+  // every host restarted is a host that no longer asks for one. So the button stays while its panel is open,
+  // and leaves with it.
+  const [reading, setReading] = useState(false)
   return (
     <nav
       aria-label="Projects"
@@ -347,7 +351,9 @@ function Column() {
         </Icon>
         {/* Only when there is something to do: the clone is behind origin, or a host of this machine
             answered that the clone has moved past it. */}
-        {updating && <UpdateButton label={updating} onChanged={refresh} />}
+        {(updating || reading) && (
+          <UpdateButton label={updating} onChanged={refresh} onOpenChange={setReading} />
+        )}
         <Icon
           className="size-6"
           label="New project"
@@ -374,7 +380,18 @@ function Column() {
  * when it refused — nothing was restarted then), one line per host, and the window's own swap while it runs
  * or why it was rolled back. A host that did not come back is a line in red: it is never called ready.
  */
-function UpdateButton({ label, onChanged }: { label: string; onChanged: () => Promise<unknown> }) {
+function UpdateButton({
+  label,
+  onChanged,
+  onOpenChange,
+}: {
+  /** What the click would do, from `updateTitle`; absent when the rail has nothing to offer and only the
+   * panel of the last click keeps this button on screen. */
+  label?: string
+  onChanged: () => Promise<unknown>
+  /** Whether the panel is open, so the column keeps the button while the result is being read. */
+  onOpenChange: (open: boolean) => void
+}) {
   const [pending, setPending] = useState(false)
   const [report, setReport] = useState<UpdateReport>()
   const [error, setError] = useState<string>()
@@ -385,16 +402,21 @@ function UpdateButton({ label, onChanged }: { label: string; onChanged: () => Pr
   const restart = useRestart()
   useEffect(() => () => clearTimeout(exit.current), [])
 
+  const show = (next: boolean) => {
+    setOpen(next)
+    onOpenChange(next)
+  }
+
   const close = () => {
     clearTimeout(exit.current)
-    setOpen(false)
+    show(false)
   }
 
   /** Beside the button and upwards: the foot of the rail is at the bottom of the window. */
   const openPanel = () => {
     const box = frame.current?.getBoundingClientRect()
     if (box) setAnchor({ left: box.right + 8, bottom: Math.max(8, window.innerHeight - box.bottom) })
-    setOpen(true)
+    show(true)
   }
 
   /** Leaving the button and its panel closes it, with the usual moment of grace over the gap between them. */
@@ -437,13 +459,16 @@ function UpdateButton({ label, onChanged }: { label: string; onChanged: () => Pr
   }
 
   const lines = report?.projects ?? []
-  const title = `${label} — restarting a project's window interrupts the turn running in it`
+  const name = label ?? 'Update and restart the machine'
+  const title = label
+    ? `${label} — restarting a project's window interrupts the turn running in it`
+    : 'Update the clone and restart every project that runs old code'
   return (
     <div className="relative flex" onPointerLeave={leave} ref={frame}>
       <Icon
         className="size-6"
         disabled={pending}
-        label={label}
+        label={name}
         onClick={() => void run()}
         title={title}
       >
