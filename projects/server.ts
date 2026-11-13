@@ -42,11 +42,20 @@
  *
  * The true state is always the re-read lock, never a list in memory: the extension may reload between
  * one action and the other. There is no poll — the screen reads on opening and again on the refresh
- * button. `stop`, `create`, `splash` and `forget` are **user actions**: an agent calling the extension
- * cannot stop a host, create one, hide one from the rail or flip this machine's splash behind the screen
- * (`list`, `measure`, `state` and `start` remain callable).
+ * button. `stop`, `create`, `splash`, `forget` and `update` are **user actions**: an agent calling the
+ * extension cannot stop a host, create one, hide one from the rail, flip this machine's splash behind the
+ * screen or restart every window of the machine on it (`list`, `measure`, `state` and `start` remain
+ * callable).
  *
- * Outside the homes of the projects it brought up, this extension writes **two** files, both in this
+ * The `update` action is the button at the foot of the rail: it pulls the shared clone once through the
+ * `update` extension's own action — this extension never runs git, pnpm or the clone's lock — and then
+ * restarts, one at a time, every host of the machine that answered that the clone has moved past it. The
+ * current process is never restarted from here (it is answering the click): the answer carries
+ * `restartSelf` and the window asks the SDK's `restart()`. Each host is proved back by the **generation**
+ * the supervisor announced, because the port keeps answering throughout the swap with the old process; an
+ * attempt is stamped per home+build so the same pair is not tried twice inside ten minutes.
+ *
+ * Outside the homes of the projects it brought up, this extension writes **three** files, all in this
  * machine's `~/.ultimate/`:
  *
  * - `settings.json` — the splash animation on or off (the `splash` action) and the homes the rail hides
@@ -57,6 +66,9 @@
  * - `projects-shown.json` — when each project's rail was last opened (`shown`), which is the order of the
  *   tiles, and the only thing `shown` writes: the newest 100 homes, through a temporary and a `rename`, and
  *   a file that cannot be read is treated as empty rather than repaired.
+ * - `projects-restarts.json` — when the `update` action last tried to restart a host, by home+build
+ *   (`update`): the anti-loop window. Written before the first restart, through a temporary and a `rename`,
+ *   with the entries older than the window dropped, and unreadable as no attempt at all.
  *
  * **Nothing is deleted**: forgetting a project only adds its home to a list.
  */
@@ -84,14 +96,21 @@ import { defineExtension } from '@earendil-works/pi-durable'
 import {
   adjustHidden,
   adjustSplash,
+  ago,
   startArgs,
   absolutePath,
   command,
   hiddenHomes,
   isHidden,
   ordered,
+  pullOwed,
+  restartLog,
+  restartPlan,
+  restartServed,
+  restartsFile,
   shownFile,
   shownStamps,
+  stampsAfter,
   stamped,
   stopDecision,
   hostOrigin,
@@ -103,16 +122,20 @@ import {
   splashEnabled,
   withoutHidden,
 } from './projects.ts'
+import type { Candidate, Planned } from './projects.ts'
 import type {
   State,
   Measurement,
   Project,
   CreateResult,
   ForgetResult,
+  PullResult,
+  RestartOutcome,
   Shown,
   StopResult,
   Section,
   Splash,
+  UpdateReport,
 } from './types.ts'
 
 export default defineExtension({ name: 'projects' })
@@ -122,6 +145,16 @@ const WAIT = 3000
 
 /** The deadline of the whole bring-up: the lock, then the answer on that port. */
 const START_WAIT = 20000
+
+/** How long a host is given to look at the clone again (`update`'s `check`), which may fetch origin. */
+const CHECK_WAIT = 30000
+
+/**
+ * How long a host is given to **accept** a restart. The supervisor type-checks and boots the next core before it
+ * answers, so this is the swap's own deadline (the same two minutes the SDK's `restart()` waits), not a health
+ * check: the answer arrives when the new core is prepared, and serving it is then a second or two.
+ */
+const SWAP_WAIT = 120000
 
 /** How long the SIGTERM is given before escalating to SIGKILL. */
 const STOP_WAIT = 8000
@@ -148,6 +181,23 @@ interface MessagesService {
 }
 const Messages = { name: 'messages' } as const
 
+/**
+ * The `update` service, which this extension **wants** and never provides: it says how far the clone is
+ * behind and whether this process runs code the clone has moved past. The pull itself is that extension's
+ * `update` action, called through `host.invoke` — this extension never touches git, pnpm or the clone's
+ * lock.
+ */
+interface UpdateService {
+  state(): Promise<{
+    behind: number
+    install: boolean
+    restart: boolean
+    refused?: string
+    preview?: true
+  }>
+}
+const Update = { name: 'update' } as const
+
 interface Context {
   signal: AbortSignal
   host: {
@@ -158,6 +208,12 @@ interface Context {
     /** This host's conversations, with the `busy` of the live task graph. */
     conversations(): readonly { busy: boolean }[]
     need<S>(api: { name: string }): S
+    /** The current provider of a service, or `undefined` while none is enabled: `update` is optional here. */
+    want<S>(api: { name: string }): S | undefined
+    /** This process's build and generation, read from the system snapshot it already keeps. */
+    system(): { build: { id: string }; process: { generation: number } }
+    /** Call an installed extension's action on behalf of this host: how the pull reaches `update`'s own. */
+    invoke(name: string, action: string, args: JsonValue, signal: AbortSignal): Promise<unknown>
     /** A value shared with the next load of this extension (the semaphore model, the write queue). */
     resource<T>(key: string, create: () => T): T
   }
@@ -170,6 +226,19 @@ interface Measurements {
   reason?: string
   /** When this row was measured: each host answers in its own time. */
   at?: string
+}
+
+/**
+ * What a host answered about itself, plus the reason when it did not: the two counts the rail shows, and
+ * what the update button needs to know about that host alone (`build`, `generation`, `restart`).
+ */
+interface Answer {
+  working: number | null
+  openQuestions: number | null
+  at?: string
+  build?: string
+  generation?: number
+  restart?: boolean
 }
 
 /** How many conversations of this host are working now. */
@@ -200,15 +269,13 @@ function reason(error: unknown): string {
 
 /**
  * Asks another host of this machine how many of its conversations are working and how many questions wait
- * for an answer. `origin` is an address that already passed `hostOrigin`: this extension refuses to make
- * a request to anything a lock could talk it into. The target's `Origin` is what its `admit` accepts on
- * loopback; a host that does not answer (or does not have this extension) returns an error, and whoever
- * called shows `unavailable`.
+ * for an answer — and, since the answer comes from that process itself, the two things only it can say:
+ * which build it runs and whether the clone has moved past it (the update button's share). `origin` is an
+ * address that already passed `hostOrigin`: this extension refuses to make a request to anything a lock
+ * could talk it into. The target's `Origin` is what its `admit` accepts on loopback; a host that does not
+ * answer (or does not have this extension) returns an error, and whoever called shows `unavailable`.
  */
-async function ask(
-  origin: string,
-  signal: AbortSignal,
-): Promise<{ working: number | null; openQuestions: number | null }> {
+async function ask(origin: string, signal: AbortSignal): Promise<Answer> {
   const response = await fetch(`${origin}/api/extensions/projects/actions/state`, {
     method: 'POST',
     headers: { Origin: origin, 'Content-Type': 'application/json' },
@@ -216,7 +283,13 @@ async function ask(
     signal: AbortSignal.any([AbortSignal.timeout(WAIT), signal]),
   })
   const body = (await response.json().catch(() => ({}))) as {
-    result?: { working?: unknown; openQuestions?: unknown }
+    result?: {
+      working?: unknown
+      openQuestions?: unknown
+      build?: unknown
+      generation?: unknown
+      restart?: unknown
+    }
     error?: unknown
   }
   if (!response.ok)
@@ -225,7 +298,18 @@ async function ask(
   const openQuestions = asCount(body.result?.openQuestions)
   // An answer with neither of the two numbers is no measurement at all: it is as if it had not answered.
   if (working === null && openQuestions === null) throw new Error('the answer carried no count')
-  return { working, openQuestions }
+  const build = body.result?.build
+  const generation = body.result?.generation
+  const restart = body.result?.restart
+  return {
+    working,
+    openQuestions,
+    ...(typeof build === 'string' && build ? { build } : {}),
+    ...(typeof generation === 'number' && Number.isSafeInteger(generation) && generation >= 0
+      ? { generation }
+      : {}),
+    ...(typeof restart === 'boolean' ? { restart } : {}),
+  }
 }
 
 /** A measurement number, or `null` for a crooked value; the same criterion as `projects.ts`. */
@@ -234,10 +318,64 @@ function asCount(value: unknown): number | null {
 }
 
 /**
+ * The clone as the `update` extension last checked it: absent when that extension is not enabled, or when it
+ * did not answer — a rail that cannot read it shows no button, rather than one that does nothing. `restart`
+ * is that extension's answer about **this** process, which is why the same field is asked of every host.
+ */
+async function cloneState(
+  ctx: Context,
+): Promise<{ behind: number; install: boolean; restart: boolean } | undefined> {
+  const update = ctx.host.want<UpdateService>(Update)
+  if (!update) return undefined
+  try {
+    const state = await update.state()
+    return {
+      behind: asCount(state.behind) ?? 0,
+      install: state.install === true,
+      restart: state.restart === true,
+    }
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * What this host says about itself without asking anyone: its counts, the build and generation of its
+ * process, and whether the clone has moved past it. It is what `state` answers — so another host's wave
+ * carries it — and what `measure` of this window's own row uses.
+ */
+async function localState(ctx: Context): Promise<State> {
+  const state: State = {
+    working: workingNow(ctx),
+    openQuestions: await countOpenQuestions(ctx),
+    at: new Date().toISOString(),
+  }
+  try {
+    const system = ctx.host.system()
+    if (system.build.id) state.build = system.build.id
+    state.generation = system.process.generation
+  } catch {
+    // A host whose system snapshot is not ready has no build to report: the fields stay absent.
+  }
+  const clone = await cloneState(ctx)
+  if (clone) {
+    state.restart = clone.restart
+    state.behind = clone.behind
+    state.install = clone.install
+  }
+  return state
+}
+
+/**
  * A row of the section from what was measured: it never invents a number that did not come, and it never
  * hands the screen an address that did not pass `hostOrigin` — not to fetch, not to link.
  */
-function toRow(project: HostProject, measurements?: Measurements, shownAt?: number): Project {
+function toRow(
+  project: HostProject,
+  measurements?: Measurements,
+  shownAt?: number,
+  restart?: boolean,
+): Project {
   const cmd = command(project.root)
   const origin = project.running ? hostOrigin(project.running.url) : undefined
   const reason = measurements?.reason ?? (project.running && !origin ? REFUSED_LOCK : undefined)
@@ -251,6 +389,7 @@ function toRow(project: HostProject, measurements?: Measurements, shownAt?: numb
     ...(project.running && origin ? { running: { pid: project.running.pid, url: origin } } : {}),
     ...(cmd ? { command: cmd } : {}),
     ...(reason ? { reason } : {}),
+    ...(restart ? { restart: true } : {}),
     ...(measurements
       ? {
           working: measurements.working,
@@ -395,32 +534,42 @@ async function writeSettings(path: string, settings: Record<string, unknown>) {
 }
 
 /**
- * This machine's stamps, read on the spot (`~/.ultimate/projects-shown.json`): a missing file is no stamp at
- * all, and one that cannot be read whole is read as nothing — the order it gives is a hint, and a broken
- * hint is not worth a refusal in the middle of a page load.
+ * A file of this extension that is a hint rather than a document — the stamps of the rails that were opened,
+ * the restarts that were attempted — read on the spot: a missing file is nothing at all, and one that cannot
+ * be read whole is read as nothing. A broken hint is not worth a refusal in the middle of a page load, and
+ * nothing is rewritten because of it.
  */
-async function readShown(): Promise<Record<string, number>> {
-  const text = await readFile(shownFile(userHome()), 'utf8').catch(() => '')
+async function readHint(
+  path: string,
+  parse: (value: unknown) => Record<string, number>,
+): Promise<Record<string, number>> {
+  const text = await readFile(path, 'utf8').catch(() => '')
   if (!text.trim()) return {}
   try {
-    return shownStamps(JSON.parse(text))
+    return parse(JSON.parse(text))
   } catch {
     return {}
   }
 }
 
+/** This machine's stamps of the rails that were opened: `~/.ultimate/projects-shown.json`. */
+const readShown = () => readHint(shownFile(userHome()), shownStamps)
+
+/** The restarts the update button attempted, by home+build: `~/.ultimate/projects-restarts.json`. */
+const readRestarts = () => readHint(restartsFile(userHome()), restartLog)
+
 /**
- * The stamps file, written through a temporary beside it and a `rename`: a `list` running at that moment
- * never reads half a JSON. Like the settings, a link here is followed — the file that is rewritten is the
- * target, not the link. It is born private — it says which projects this machine's windows have opened —
- * and it is created on the first page load, when the file does not exist yet.
+ * One of those hint files, written through a temporary beside it and a `rename`: a `list` running at that
+ * moment never reads half a JSON. Like the settings, a link here is followed — the file that is rewritten is
+ * the target, not the link. It is born private — the stamps say which projects this machine's windows have
+ * opened, the attempts which restarts it tried — and it is created on the first write.
  */
-async function writeShown(path: string, stamps: Record<string, number>) {
+async function writeHint(path: string, value: Record<string, number>) {
   const target = await realpath(path).catch(() => path)
   await mkdir(dirname(target), { recursive: true })
   const temporary = join(dirname(target), `.${basename(target)}.${randomUUID()}.tmp`)
   try {
-    await writeFile(temporary, JSON.stringify(stamps, null, 2) + '\n', { flag: 'wx', mode: 0o600 })
+    await writeFile(temporary, JSON.stringify(value, null, 2) + '\n', { flag: 'wx', mode: 0o600 })
     await rename(temporary, target)
   } finally {
     await rm(temporary, { force: true })
@@ -780,6 +929,147 @@ async function bringUp(
   }
 }
 
+/**
+ * Asks a host to look at the clone again (`update`'s `check`): `restart` is computed when it looks, so a host
+ * that has not looked since the clone moved still answers "nothing to do", and the list would come out empty
+ * one click after the pull that moved it. `undefined` when that host does not have the update extension, or did
+ * not answer — the cached answer is then the best there is.
+ */
+async function askRefreshed(origin: string, signal: AbortSignal): Promise<boolean | undefined> {
+  try {
+    const response = await fetch(`${origin}/api/extensions/update/actions/check`, {
+      method: 'POST',
+      headers: { Origin: origin, 'Content-Type': 'application/json' },
+      body: '{}',
+      // Its own deadline: a `check` may fetch origin, which is slower than the loopback answer of a `state`.
+      signal: AbortSignal.any([AbortSignal.timeout(CHECK_WAIT), signal]),
+    })
+    const body = (await response.json().catch(() => ({}))) as {
+      result?: { restart?: unknown }
+    }
+    if (!response.ok) return undefined
+    const restart = body.result?.restart
+    return typeof restart === 'boolean' ? restart : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Every host of this machine that can be asked to restart, in the order the rail draws them — this window's
+ * host included, because the question is the same for it (`localState` answers without a trip). A host that
+ * does not answer is left out: there is nothing to ask, and the wave already shows it as unavailable. Each one
+ * is asked to look at the clone **again** first: the answer that matters is the one after the pull, and a host
+ * that has not looked since then would say it owes nothing. The answer each gives is what decides whether it is
+ * restarted; this function decides nothing.
+ */
+async function candidatesOf(ctx: Context, signal: AbortSignal): Promise<Candidate[]> {
+  const stamps = await readShown()
+  const rows = ordered(
+    uniqueByRoot((await ctx.host.projects()).filter((project) => project.root)).map((project) => ({
+      ...project,
+      shownAt: stamps[project.home],
+    })),
+  )
+  return Promise.all(
+    rows.map(async (row): Promise<Candidate> => {
+      if (row.current) {
+        const here = await localState(ctx)
+        return {
+          name: row.name,
+          home: row.home,
+          self: true,
+          restart: here.restart,
+          ...(here.build ? { build: here.build } : {}),
+          ...(here.generation === undefined ? {} : { generation: here.generation }),
+        }
+      }
+      // The lock is third-party input, so its address passes `hostOrigin` here as it does everywhere else;
+      // one that names no address of this machine is nowhere to ask, and is not a candidate.
+      const origin = row.running ? hostOrigin(row.running.url) : undefined
+      if (!origin) return { name: row.name, home: row.home, self: false }
+      const [answer, refreshed] = await Promise.all([
+        ask(origin, signal).catch(() => undefined),
+        askRefreshed(origin, signal),
+      ])
+      return {
+        name: row.name,
+        home: row.home,
+        self: false,
+        origin,
+        restart: refreshed ?? answer?.restart,
+        ...(answer?.build ? { build: answer.build } : {}),
+        ...(answer?.generation === undefined ? {} : { generation: answer.generation }),
+      }
+    }),
+  )
+}
+
+/**
+ * Restarts one host of the machine and waits for it to be back — the new generation, not merely the port.
+ *
+ * The request goes to the host itself, on loopback, with **that host's** `Origin`: the same trip `ask` makes,
+ * and the one its `admit` accepts. The supervisor type-checks and prepares the new core before it answers `202`
+ * with the generation it is about to serve, and keeps proxying to the **old** core until the new one is up — so
+ * the port answering proves nothing, and the proof is that the announced generation is the one answering
+ * `state` now. A host that does not come back in the deadline of a bring-up is not ready, and its reason says
+ * which of the two silences it was.
+ */
+async function restartHost(
+  target: { name: string; origin: string },
+  signal: AbortSignal,
+): Promise<RestartOutcome> {
+  const started = Date.now()
+  try {
+    const response = await fetch(`${target.origin}/api/restart`, {
+      method: 'POST',
+      headers: { Origin: target.origin, 'Content-Type': 'application/json' },
+      body: '{}',
+      signal: AbortSignal.any([AbortSignal.timeout(SWAP_WAIT), signal]),
+    })
+    const body = (await response.json().catch(() => ({}))) as {
+      generation?: unknown
+      error?: unknown
+    }
+    if (!response.ok)
+      return {
+        name: target.name,
+        result: 'failed',
+        reason: `refused: ${typeof body.error === 'string' ? body.error : `HTTP ${response.status}`}`,
+      }
+    const announced = asCount(body.generation)
+    if (announced === null)
+      return { name: target.name, result: 'failed', reason: 'the answer named no generation' }
+    const deadline = started + START_WAIT
+    let answered = false
+    for (;;) {
+      const answer = await ask(target.origin, signal).catch(() => undefined)
+      if (answer) {
+        answered = true
+        if (restartServed(answer, announced))
+          return {
+            name: target.name,
+            result: 'restarted',
+            seconds: Math.round((Date.now() - started) / 1000),
+          }
+      }
+      if (Date.now() > deadline)
+        return {
+          name: target.name,
+          result: 'failed',
+          reason: answered
+            ? `no new generation in ${START_WAIT / 1000}s`
+            : `no answer in ${START_WAIT / 1000}s`,
+        }
+      await sleep(250)
+    }
+  } catch (error) {
+    if ((error as Error | undefined)?.name === 'TimeoutError')
+      return { name: target.name, result: 'failed', reason: `no answer in ${SWAP_WAIT / 1000}s` }
+    return { name: target.name, result: 'failed', reason: reason(error) }
+  }
+}
+
 export const actions = {
   /**
    * This machine's projects, with the state and the command, **in the order the rail draws them**: this
@@ -799,6 +1089,10 @@ export const actions = {
     // from their own file, also now: a page load in another window changes the order of this one.
     const settings = await readSettings()
     const stamps = await readShown()
+    // The clone is one for every host of this machine, and the `update` extension's last check answers it
+    // without a request: it is what the button at the foot of the rail counts, so the cheap read carries it
+    // too. Absent when that extension is not enabled here.
+    const clone = await cloneState(ctx)
     const projects = withoutHidden(
       uniqueByRoot((await ctx.host.projects()).filter((project) => project.root)),
       hiddenHomes(settings.settings),
@@ -814,25 +1108,30 @@ export const actions = {
         projects: ordered(projects.map((project) => toRow(project, undefined, stamp(project)))),
         at,
         splash,
+        ...(clone ? { clone } : {}),
       }
     const here: Measurements = {
       working: workingNow(ctx),
       openQuestions: await countOpenQuestions(ctx),
       at: new Date().toISOString(),
     }
+    // This host's own restart is the `update` extension's answer about this process, exactly as another
+    // host's is that host's answer: the row carries it and nothing else does.
     const lines = await Promise.all(
       projects.map(async (project): Promise<Project> => {
         // This window's project: the measurements are this host's, with no trip at all.
-        if (project.current) return toRow(project, here, stamp(project))
+        if (project.current) return toRow(project, here, stamp(project), clone?.restart)
         // Stopped: there is no one to ask, and the screen shows the command in place of the measurement.
         if (!project.running) return toRow(project, undefined, stamp(project))
         const origin = hostOrigin(project.running.url)
         if (!origin) return toRow(project, undefined, stamp(project))
         try {
+          const answer = await ask(origin, ctx.signal)
           return toRow(
             project,
-            { ...(await ask(origin, ctx.signal)), at: new Date().toISOString() },
+            { ...answer, at: new Date().toISOString() },
             stamp(project),
+            answer.restart,
           )
         } catch (error) {
           return toRow(
@@ -848,7 +1147,7 @@ export const actions = {
         }
       }),
     )
-    return { projects: ordered(lines), at, splash }
+    return { projects: ordered(lines), at, splash, ...(clone ? { clone } : {}) }
   },
 
   /**
@@ -866,7 +1165,7 @@ export const actions = {
     const path = shownFile(userHome())
     const shownAt = await serialised(ctx, path, async () => {
       const at = Date.now()
-      await writeShown(path, stamped(await readShown(), ctx.host.home, at))
+      await writeHint(path, stamped(await readShown(), ctx.host.home, at))
       return at
     })
     return { shownAt }
@@ -953,15 +1252,89 @@ export const actions = {
 
   /**
    * This host only: how many of its conversations are working now and how many questions wait for an
-   * answer. It is what another host of the machine asks to measure a tile; it never leaves here to ask
-   * anyone else.
+   * answer — and, for the button at the foot of every rail of this machine, the build and generation of this
+   * process and whether the clone has moved past it. It is what another host of the machine asks to measure a
+   * tile and to know which hosts need a restart; it never leaves here to ask anyone else.
    */
   async state(_args: JsonValue, ctx: Context): Promise<State> {
-    return {
-      working: workingNow(ctx),
-      openQuestions: await countOpenQuestions(ctx),
-      at: new Date().toISOString(),
+    return localState(ctx)
+  },
+
+  /**
+   * The button at the foot of the rail — **update and restart the machine** — and only a person's click. In
+   * this order:
+   *
+   * 1. The pull, once, through `update`'s own action (`host.invoke`): this extension never touches git,
+   *    pnpm or the clone's lock, and it never brings an update of its own. It is asked only when there is
+   *    something to bring in or an install is owed (`pullOwed`); a **refusal** is handed back whole and
+   *    stops everything — nothing is restarted onto a clone that did not move.
+   * 2. Every host of the machine asked what only it knows: does the clone run past this process?
+   * 3. Those that said yes are restarted **one at a time**, in the rail's order, this window's own last and
+   *    never here: the process answering this call cannot swap itself, so the answer carries `restartSelf`
+   *    and `web.tsx` asks the SDK's `restart()` — the core does that swap, with its own rollback.
+   *
+   * Every attempt is stamped per home+build in `~/.ultimate/projects-restarts.json` **before** the first
+   * restart, and the same pair is left alone for ten minutes: a host that came back still old for another
+   * reason turns up again later instead of looping now.
+   *
+   * Everything here runs on this action's **own** deadlines, never on the caller's signal: the pull can change
+   * the extension bundle and so reload the window that clicked, and a window that reloads mid-way must not
+   * leave half the machine restarted.
+   */
+  async update(_args: JsonValue, ctx: Context): Promise<UpdateReport> {
+    // Nothing is aborted from outside: the click was made, and the machine's restarts are not the page's.
+    const own = new AbortController().signal
+    const clone = await cloneState(ctx)
+    let pull: PullResult | undefined
+    if (pullOwed(clone)) {
+      if (!ctx.host.want<UpdateService>(Update))
+        throw new Error('The update extension is not enabled in this window, so the clone cannot be updated')
+      const result = (await ctx.host.invoke('update', 'update', {}, own)) as PullResult | undefined
+      pull = result ?? { ok: false, refused: 'the update extension answered nothing' }
+      // A refusal is reported as it came, and the rest of the click does not happen.
+      if (!pull.ok) return { pull, projects: [], restartSelf: false }
     }
+    // This host's own view of the clone is as old as the last check: the click asks it to look again, so a
+    // landing that nobody has looked at yet is not missed.
+    if (ctx.host.want<UpdateService>(Update))
+      await ctx.host.invoke('update', 'check', {}, own).catch(() => undefined)
+    const hosts = await candidatesOf(ctx, own)
+    const now = Date.now()
+    const path = restartsFile(userHome())
+    let plan: Planned[] = []
+    await serialised(ctx, path, async () => {
+      const attempts = await readRestarts()
+      plan = restartPlan(hosts, attempts, now)
+      // Stamped before the first restart: a process that dies in the middle of them does not loop either.
+      await writeHint(
+        path,
+        stampsAfter(
+          attempts,
+          plan.filter((target) => target.held === undefined).map((target) => target.key),
+          now,
+        ),
+      )
+    })
+    const projects: RestartOutcome[] = []
+    let restartSelf = false
+    for (const target of plan) {
+      if (target.self) {
+        restartSelf = true
+        projects.push({ name: target.name, result: 'self' })
+        continue
+      }
+      if (target.held !== undefined) {
+        projects.push({
+          name: target.name,
+          result: 'held',
+          reason: `tried ${ago(target.held, now)}`,
+        })
+        continue
+      }
+      if (!target.origin) continue
+      projects.push(await restartHost({ name: target.name, origin: target.origin }, own))
+    }
+    return { ...(pull ? { pull } : {}), projects, restartSelf }
   },
 
   /**
@@ -1106,11 +1479,13 @@ export const actions = {
 }
 
 /**
- * The actions only a click may take: stopping a host, creating one, hiding one from the rail, and turning
- * this machine's splash animation on or off. An agent calling the extension cannot do them behind the
- * screen — which is also what makes the confirmation of `stop` mean something, since `confirm: true` from
- * an agent is not a person saying yes. `list`, `measure`, `state` and `start` stay open: the rail, the
- * phone and another project's window read them, and a host that is down is brought up by whoever needs
- * it.
+ * The actions only a click may take: stopping a host, creating one, hiding one from the rail, turning this
+ * machine's splash animation on or off, and updating the clone and restarting the machine's hosts. An agent
+ * calling the extension cannot do them behind the screen — which is also what makes the confirmation of
+ * `stop` mean something, since `confirm: true` from an agent is not a person saying yes. The last of them is
+ * the one that must not happen behind the screen: restarting another window **interrupts the turn running
+ * there** (it resumes from the checkpoint), and an agent cannot decide that. `list`, `measure`, `state` and
+ * `start` stay open: the rail, the phone and another project's window read them, and a host that is down is
+ * brought up by whoever needs it.
  */
-export const userActions = ['stop', 'create', 'splash', 'forget']
+export const userActions = ['stop', 'create', 'splash', 'forget', 'update']

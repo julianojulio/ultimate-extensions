@@ -49,6 +49,11 @@ export interface Project {
    * the tile. */
   reason?: string
   /**
+   * The clone moved past this host's process (`server/`, `shared/` or the packages changed after it
+   * started): a restart loads it. `undefined` when nobody asked — the cheap read of the rail never does.
+   */
+  restart?: boolean
+  /**
    * `ultimate <path>`, the command that brings the project up by hand. Shown and copied, never
    * executed.
    */
@@ -69,6 +74,19 @@ export interface Section {
    * never stored.
    */
   splash: boolean
+  /**
+   * What the shared clone needs, from the `update` extension's last check — the same clone for every host
+   * of this machine. Absent when that extension is not enabled, or refused to be read.
+   */
+  clone?: Clone
+}
+
+/** The clone as the update button needs it: how far behind origin, and whether a pull owes an install. */
+export interface Clone {
+  /** Commits on `origin/<branch>` the clone lacks, as of the last fetch. */
+  behind: number
+  /** The lockfile names packages that are not installed: the next pull installs them. */
+  install: boolean
 }
 
 /** What the `splash` action left: the animation on or off in this machine's settings. */
@@ -96,12 +114,74 @@ export interface Measurement {
   at: string
 }
 
-/** What a host answers about itself, when another host of the machine asks. */
+/**
+ * What a host answers about itself, when another host of the machine asks — and what this window's host
+ * knows without asking anyone. The counts are what the rail measures; the rest is what the update button
+ * needs to know about this host alone, which is why the wave carries it instead of a second request.
+ */
 export interface State {
   working: number
   /** Questions without an answer in this host; `null` when not even that was measured. */
   openQuestions: number | null
   at: string
+  /** The build this process runs, by id: half of the stamp that keeps a restart from looping. Absent when the
+   * host could not read its own build. */
+  build?: string
+  /**
+   * Which process of this host answers (`ULTIMATE_GENERATION`): the proof that a restart took, since the
+   * port keeps answering throughout the supervisor's swap with the old generation.
+   */
+  generation?: number
+  /** The clone moved past this process: a restart loads it. Absent when `update` is not enabled here. */
+  restart?: boolean
+  /** Commits origin has that the clone lacks, as of the last fetch. */
+  behind?: number
+  /** An install is owed: the next pull installs the packages the lockfile names. */
+  install?: boolean
+}
+
+/**
+ * What the `update` extension answered when this button pulled the clone: its own `update` action, verbatim,
+ * as much of it as this extension reports. A refusal is reported whole and stops the rest.
+ */
+export type PullResult =
+  | {
+      ok: true
+      from: string
+      to: string
+      commits: number
+      install: 'done' | 'failed' | 'skipped'
+      installError?: string
+    }
+  | { ok: false; refused: string }
+
+/** What became of one host the button tried to restart. */
+export interface RestartOutcome {
+  name: string
+  /**
+   * `restarted`: the generation that was announced now serves. `failed`: it did not come back in the
+   * deadline. `held`: the same host on the same build was tried inside the anti-loop window. `self`: this
+   * window's host, which an action cannot restart — the window does it.
+   */
+  result: 'restarted' | 'failed' | 'held' | 'self'
+  /** How long the host took to serve the new generation, for `restarted`. */
+  seconds?: number
+  /** Why it is not `restarted`: `no answer in 20s`, `refused: …`, `tried 3 min ago`. */
+  reason?: string
+}
+
+/**
+ * What the `update` action did, in the order it did it: the pull (when one was owed), then each host. Empty
+ * `projects` with a refused `pull` is the refusal stopping everything.
+ */
+export interface UpdateReport {
+  /** The pull, when one was owed. A refusal stops the rest: nothing is restarted onto a clone that did not move. */
+  pull?: PullResult
+  /** Each host, in the order it was tried, this window's own last. */
+  projects: RestartOutcome[]
+  /** This window's host is in the list and only the window can restart it: `web.tsx` calls the SDK's
+   * `restart()` and the core does the swap with its own rollback. */
+  restartSelf: boolean
 }
 
 /**

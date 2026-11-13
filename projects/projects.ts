@@ -1,10 +1,12 @@
 /**
  * The pure calculations of the Projects rail: the initials of the tile, the two groups (running and
  * stopped) and the order of the stack inside them, the path typed into the `+` dialog, the central home a
- * new project will occupy, the port that only the panel shows, what the stop button decides, and what the
+ * new project will occupy, the port that only the panel shows, what the stop button decides, what the
  * splash button, the `forget` button and a rail that was just shown write to this machine — the settings and
- * the stamps file. Nothing here reads the machine, opens a process or makes a request — `projects.test.ts`
- * covers all of it with fixtures.
+ * the stamps file —, and what the update button at the foot of the rail promises and does: who enters the
+ * restart list, which of them the anti-loop window holds back, and the sentence of each result. Nothing
+ * here reads the machine, opens a process or makes a request — `projects.test.ts` covers all of it with
+ * fixtures.
  *
  * The state is never the colour alone: the rail writes `running`/`stopped` in each tile's panel, the
  * group is the position (running above the line, stopped below) and what was measured comes as a
@@ -15,7 +17,14 @@
  */
 import { createHash } from 'node:crypto'
 import { basename, isAbsolute, join, resolve } from 'node:path'
-import type { Measurement, Project, Section } from './types.ts'
+import type {
+  Clone,
+  Measurement,
+  Project,
+  PullResult,
+  RestartOutcome,
+  Section,
+} from './types.ts'
 
 /**
  * How old a reading may be and still move the rail: the wave's ceiling, and the age at which the pulse
@@ -159,9 +168,21 @@ export function initials(name: string): string {
 }
 
 /** The rail split by what it shows: the running hosts on top, the stopped ones below. */
-export interface Groups {
-  running: Project[]
-  stopped: Project[]
+export interface Groups<T> {
+  running: T[]
+  stopped: T[]
+}
+
+/**
+ * The fields the order reads — nothing else of a row matters to it — so a caller that has its own row shape
+ * (the action that plans the restarts) is ordered by the same code the rail is, instead of a second copy.
+ */
+export interface Stacked {
+  name: string
+  current: boolean
+  shownAt?: number
+  openedAt?: number
+  running?: unknown
 }
 
 /**
@@ -169,7 +190,7 @@ export interface Groups {
  * (`shownAt`), and — for a project this machine has no stamp for — when it opened (`openedAt`). With
  * neither, the name decides.
  */
-function recency(project: Project): number | undefined {
+function recency(project: Stacked): number | undefined {
   return project.shownAt ?? project.openedAt
 }
 
@@ -179,7 +200,7 @@ function recency(project: Project): number | undefined {
  * whole point of the order. Two projects with no stamp at all are decided by name, so an order that owes
  * nothing to the machine is still the same on every open.
  */
-function stack(a: Project, b: Project): number {
+function stack(a: Stacked, b: Stacked): number {
   if (a.current !== b.current) return Number(b.current) - Number(a.current)
   const left = recency(a)
   const right = recency(b)
@@ -196,7 +217,7 @@ function stack(a: Project, b: Project): number {
  * recently, and so on down to the ones that were never shown — the oldest `openedAt` last. The stamps are
  * of the machine, not of a window, so every rail of this machine agrees on which project came before.
  */
-export function groups(projects: readonly Project[]): Groups {
+export function groups<T extends Stacked>(projects: readonly T[]): Groups<T> {
   return {
     running: projects.filter((project) => project.running !== undefined).sort(stack),
     stopped: projects.filter((project) => project.running === undefined).sort(stack),
@@ -208,7 +229,7 @@ export function groups(projects: readonly Project[]): Groups {
  * project you came from second, stopped ones below — so the rail, the panel and the phone's compact list
  * all read one array and none of them orders it again.
  */
-export function ordered(projects: readonly Project[]): Project[] {
+export function ordered<T extends Stacked>(projects: readonly T[]): T[] {
   const { running, stopped } = groups(projects)
   return [...running, ...stopped]
 }
@@ -634,4 +655,216 @@ function asHomes(value: unknown): string[] {
   if (!Array.isArray(value) || value.some((home) => typeof home !== 'string'))
     throw new Error('projects.hidden must be an array of homes')
   return value as string[]
+}
+
+/**
+ * **This machine's** record of the restarts the update button attempted,
+ * `<user home>/.ultimate/projects-restarts.json`: `{ "<home>@<build>": <epoch ms> }`. It is what keeps a
+ * restart from looping — a host that came back still old for another reason is not restarted again and
+ * again, only after the window — and like the stamps file it is a hint, not a document: a missing or
+ * crooked one is read as no attempt at all.
+ */
+export function restartsFile(userHome: string): string {
+  return join(userHome, '.ultimate', 'projects-restarts.json')
+}
+
+/**
+ * How long the same host on the same build is left alone after an attempt: ten minutes, which is long
+ * enough for a slow boot to finish and for a person to see what happened, and short enough that a host
+ * that is still old after a while turns up again.
+ */
+export const RESTART_WINDOW = 10 * 60_000
+
+/**
+ * The stamp of one attempt: the host's **home** (unique per project, unlike a name) and the build its
+ * process runs. A host that restarted comes back on another build — a new line —, while one that did not
+ * keeps its own and is held back.
+ */
+export function restartKey(home: string, build: string | undefined): string {
+  return `${home}@${build ?? ''}`
+}
+
+/**
+ * The attempts read from the file: a home+build that maps to a finite epoch ms. A file that is not a JSON
+ * object, or a value that is not a number, is no attempt — reading it as one would hold a restart nobody
+ * tried.
+ */
+export function restartLog(value: unknown): Record<string, number> {
+  if (!isObject(value)) return {}
+  const attempts: Record<string, number> = {}
+  for (const [key, at] of Object.entries(value))
+    if (typeof at === 'number' && Number.isFinite(at) && at > 0) attempts[key] = at
+  return attempts
+}
+
+/**
+ * When this home+build was last attempted, while that is inside the window — `undefined` when it is old
+ * enough to try again, and for a host that was never tried. An attempt stamped in the future (two windows
+ * of this machine with clocks apart) counts as inside it: the window is a promise not to loop, and it is
+ * kept by waiting.
+ */
+export function heldSince(
+  attempts: Record<string, number>,
+  key: string,
+  now: number,
+): number | undefined {
+  const at = attempts[key]
+  if (at === undefined) return undefined
+  return now - at < RESTART_WINDOW ? at : undefined
+}
+
+/**
+ * The attempts after this click: the ones inside the window kept, the rest dropped — so the file does not
+ * grow —, and `keys` stamped with `now`. The stamp is written **before** the restarts start: a process that
+ * dies in the middle of them does not loop on the next click either.
+ */
+export function stampsAfter(
+  attempts: Record<string, number>,
+  keys: readonly string[],
+  now: number,
+): Record<string, number> {
+  const kept = Object.fromEntries(
+    Object.entries(attempts).filter(([, at]) => now - at < RESTART_WINDOW),
+  )
+  for (const key of keys) kept[key] = now
+  return kept
+}
+
+/**
+ * How long ago that is, in the words a line of the summary uses: `just now`, `40s ago`, `3 min ago`,
+ * `2h ago`. It never says a negative time: a stamp from the future is `just now`.
+ */
+export function ago(at: number, now: number): string {
+  const seconds = Math.max(0, Math.round((now - at) / 1000))
+  if (seconds < 5) return 'just now'
+  if (seconds < 60) return `${seconds}s ago`
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 60) return `${minutes} min ago`
+  return `${Math.round(minutes / 60)}h ago`
+}
+
+/**
+ * Whether the click owes a pull: the clone is behind origin, or the lockfile names packages that are not
+ * installed. With neither the button only restarts hosts, and the clone is left alone — an update with
+ * nothing to bring in would fast-forward nowhere and could refuse the dirty clone for nothing, which would
+ * hold back the very restarts the click asked for.
+ */
+export function pullOwed(clone: Clone | undefined): boolean {
+  return !!clone && (clone.behind > 0 || clone.install)
+}
+
+/**
+ * What the button promises, in its `title` and `aria-label`: what the click updates and how many projects
+ * it restarts — `Update and restart: update 5 commits · restart 2 projects`. Nothing to do is `undefined`:
+ * the button is not on the rail at all.
+ */
+export function updateTitle({
+  behind = 0,
+  restart = 0,
+}: {
+  behind?: number
+  restart?: number
+}): string | undefined {
+  const parts: string[] = []
+  if (behind > 0) parts.push(`update ${behind} ${behind === 1 ? 'commit' : 'commits'}`)
+  if (restart > 0) parts.push(`restart ${restart} ${restart === 1 ? 'project' : 'projects'}`)
+  return parts.length ? `Update and restart: ${parts.join(' · ')}` : undefined
+}
+
+/**
+ * A host the update button may restart, as the action found it: what it answered about itself, and whether
+ * it is this window's own host. The rows come in the rail's order, so the plan does too.
+ */
+export interface Candidate {
+  name: string
+  home: string
+  /** This window's host: an action cannot restart the process answering it, so the window does. */
+  self: boolean
+  /** The host's address on loopback, which is where the restart is asked; absent for this window's host. */
+  origin?: string
+  /** The clone moved past this process: the host asks to be restarted. Anything else does not enter. */
+  restart?: boolean
+  /** The build its process runs: the other half of the anti-loop stamp. */
+  build?: string
+  /** The generation its process would replace: what the restart is known to have taken, see `restartServed`. */
+  generation?: number
+}
+
+/** One host the click acts on, and whether the anti-loop window lets it. */
+export interface Planned {
+  name: string
+  home: string
+  self: boolean
+  origin?: string
+  generation?: number
+  /** The home+build stamp this attempt is recorded under. */
+  key: string
+  /** When the same host on the same build was last attempted, while that is inside the window. */
+  held?: number
+}
+
+/**
+ * Who the click restarts, in the order it restarts them: only the hosts that said `restart`, this window's
+ * own **last** — the hosts are restarted one at a time, and the process that answers the click is the one
+ * that must not be touched mid-way. A host that cannot be addressed on loopback is left out (there is
+ * nowhere to ask), and each one carries whether the anti-loop window holds it back and how long ago that
+ * attempt was.
+ */
+export function restartPlan(
+  hosts: readonly Candidate[],
+  attempts: Record<string, number>,
+  now: number,
+): Planned[] {
+  return hosts
+    .filter((host) => host.restart === true && (host.self || host.origin))
+    .sort((left, right) => Number(left.self) - Number(right.self))
+    .map((host) => {
+      const key = restartKey(host.home, host.build)
+      const held = heldSince(attempts, key, now)
+      return {
+        name: host.name,
+        home: host.home,
+        self: host.self,
+        ...(host.origin ? { origin: host.origin } : {}),
+        ...(host.generation === undefined ? {} : { generation: host.generation }),
+        key,
+        ...(held === undefined ? {} : { held }),
+      }
+    })
+}
+
+/**
+ * Did the restart take? The supervisor answers `/api/restart` with the generation it will bring up, and the
+ * port keeps answering throughout the swap — with the **old** generation until the new process serves. So
+ * the proof is that generation, not the answer on the port.
+ */
+export function restartServed(state: { generation?: number } | undefined, target: number): boolean {
+  return state?.generation !== undefined && state.generation >= target
+}
+
+/** The line of a pull, as the summary shows it: what moved, and whether an install came with it. A refusal
+ * is reported whole, with nothing cut. */
+export function pullLine(pull: PullResult): string {
+  if (!pull.ok) return `refused: ${pull.refused}`
+  const commits = `${pull.commits} ${pull.commits === 1 ? 'commit' : 'commits'}`
+  const install =
+    pull.install === 'done'
+      ? ' · packages installed'
+      : pull.install === 'failed'
+        ? ' · install failed'
+        : ''
+  return `updated ${commits} (${pull.from} → ${pull.to})${install}`
+}
+
+/**
+ * The line of one host in the summary: `billing-app — restarted in 4s`, `api — no answer in 20s`,
+ * `web — held, tried 3 min ago` (with the reason the action put there), `this window — restarting itself`.
+ * Nothing here decides a colour: the caller has the outcome for that.
+ */
+export function outcomeLine(outcome: RestartOutcome): string {
+  if (outcome.result === 'restarted')
+    return `${outcome.name} — restarted in ${outcome.seconds ?? 0}s`
+  if (outcome.result === 'held') return `${outcome.name} — held, ${outcome.reason ?? 'tried recently'}`
+  if (outcome.result === 'self') return `${outcome.name} — this window restarts itself`
+  return `${outcome.name} — ${outcome.reason ?? 'did not come back'}`
 }

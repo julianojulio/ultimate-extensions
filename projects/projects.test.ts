@@ -84,9 +84,22 @@ import {
   questionsTitle,
   tileTitle,
   WAVE_INTERVAL,
+  ago,
+  heldSince,
+  outcomeLine,
+  pullLine,
+  pullOwed,
+  restartKey,
+  restartLog,
+  restartPlan,
+  restartServed,
+  restartsFile,
+  RESTART_WINDOW,
+  stampsAfter,
+  updateTitle,
 } from './projects.ts'
-import type { Target } from './projects.ts'
-import type { Measurement, Project, Section } from './types.ts'
+import type { Candidate, Target } from './projects.ts'
+import type { Measurement, Project, PullResult, Section } from './types.ts'
 
 /** A row as the server sends it: up, with so many conversations working and so many questions. */
 const running = (working: number | null, openQuestions: number | null = 0): Project => ({
@@ -833,4 +846,166 @@ test('the rail does not draw a hidden home, and draws the rest as they came', ()
   // A row without a home cannot be told apart: it stays.
   const nameless = { name: 'x' }
   assert.deepEqual(withoutHidden([nameless], [home], machine), [nameless])
+})
+
+/** A host the update button may restart, as the action found it: up, on loopback, running old code. */
+const candidate = (over: Partial<Candidate> & { name: string; home: string }): Candidate => ({
+  self: false,
+  origin: 'http://127.0.0.1:4750',
+  restart: true,
+  build: 'build-1',
+  generation: 1,
+  ...over,
+})
+
+test('only the hosts that answered `restart` enter the list, this window’s own last', () => {
+  const plan = restartPlan(
+    [
+      candidate({ name: 'app', home: '/h/app' }),
+      // Up, but running the clone's own code: no restart is owed.
+      candidate({ name: 'api', home: '/h/api', restart: false }),
+      // Did not say (an older build of this extension): nothing to act on.
+      candidate({ name: 'web', home: '/h/web', restart: undefined }),
+      // Nowhere to ask: a lock that names no address of this machine is no candidate.
+      candidate({ name: 'lost', home: '/h/lost', origin: undefined }),
+      // This window's host: it is in the list, and it is the last line, because the process answering the
+      // click is the one that must not be touched mid-way.
+      candidate({ name: 'me', home: '/h/me', self: true, origin: undefined }),
+    ],
+    {},
+    1_000,
+  )
+  assert.deepEqual(
+    plan.map((target) => target.name),
+    ['app', 'me'],
+  )
+  assert.deepEqual(
+    plan.map((target) => target.key),
+    ['/h/app@build-1', '/h/me@build-1'],
+  )
+  assert.equal(plan[1].self, true)
+  // Nothing was tried yet: nothing is held.
+  assert.deepEqual(
+    plan.map((target) => target.held),
+    [undefined, undefined],
+  )
+})
+
+test('the anti-loop window holds the same home and build, and lets it go after it', () => {
+  const now = 1_700_000_000_000
+  const key = restartKey('/h/app', 'build-1')
+  assert.equal(heldSince({}, key, now), undefined)
+  assert.equal(heldSince({ [key]: now - 60_000 }, key, now), now - 60_000)
+  // Just inside the window: still held; exactly at its edge: free again.
+  assert.equal(heldSince({ [key]: now - RESTART_WINDOW + 1 }, key, now), now - RESTART_WINDOW + 1)
+  assert.equal(heldSince({ [key]: now - RESTART_WINDOW }, key, now), undefined)
+  // A stamp from the future (two windows with clocks apart) counts as inside it: the window is kept by
+  // waiting, never by restarting sooner.
+  assert.equal(heldSince({ [key]: now + 5_000 }, key, now), now + 5_000)
+})
+
+test('a host that restarted comes back on another build, so its stamp does not hold it', () => {
+  const now = 1_700_000_000_000
+  const attempts = { [restartKey('/h/app', 'old')]: now - 60_000 }
+  const [plan] = restartPlan([candidate({ name: 'app', home: '/h/app', build: 'new' })], attempts, now)
+  assert.equal(plan.key, '/h/app@new')
+  assert.equal(plan.held, undefined)
+  // The same host on the same build is the one the window holds — and the plan says since when.
+  const [held] = restartPlan([candidate({ name: 'app', home: '/h/app', build: 'old' })], attempts, now)
+  assert.equal(held.held, now - 60_000)
+})
+
+test('the attempts file keeps what is inside the window and drops the rest', () => {
+  const now = 1_700_000_000_000
+  const inside = now - 60_000
+  const outside = now - RESTART_WINDOW - 1
+  assert.deepEqual(stampsAfter({ app: inside, api: outside }, ['web'], now), {
+    app: inside,
+    web: now,
+  })
+  // Stamping the same key again moves its line instead of adding a second one.
+  assert.deepEqual(stampsAfter({ app: inside }, ['app'], now), { app: now })
+})
+
+test('a crooked attempts file is no attempt at all', () => {
+  for (const crooked of [null, [], 'x', 7, undefined]) assert.deepEqual(restartLog(crooked), {})
+  // A value that is not an epoch ms is not an attempt either: reading it as one would hold a restart nobody
+  // tried.
+  assert.deepEqual(restartLog({ ok: 5, text: 'yesterday', infinite: Infinity, negative: -1 }), { ok: 5 })
+  assert.equal(restartsFile('/home/j'), '/home/j/.ultimate/projects-restarts.json')
+})
+
+test('the pull is owed only when the clone is behind or an install is owed', () => {
+  assert.equal(pullOwed(undefined), false)
+  assert.equal(pullOwed({ behind: 0, install: false }), false)
+  assert.equal(pullOwed({ behind: 2, install: false }), true)
+  assert.equal(pullOwed({ behind: 0, install: true }), true)
+})
+
+test('the button promises what it counts, and is not on the rail when there is nothing', () => {
+  assert.equal(updateTitle({}), undefined)
+  assert.equal(updateTitle({ behind: 0, restart: 0 }), undefined)
+  assert.equal(
+    updateTitle({ behind: 5, restart: 2 }),
+    'Update and restart: update 5 commits · restart 2 projects',
+  )
+  assert.equal(
+    updateTitle({ behind: 1, restart: 1 }),
+    'Update and restart: update 1 commit · restart 1 project',
+  )
+  assert.equal(updateTitle({ restart: 3 }), 'Update and restart: restart 3 projects')
+  assert.equal(updateTitle({ behind: 1 }), 'Update and restart: update 1 commit')
+})
+
+test('a restart is proved by the generation that serves, not by the port', () => {
+  // The port keeps answering throughout the supervisor's swap, with the old process.
+  assert.equal(restartServed({ generation: 4 }, 4), true)
+  assert.equal(restartServed({ generation: 5 }, 4), true)
+  assert.equal(restartServed({ generation: 3 }, 4), false)
+  assert.equal(restartServed({}, 4), false)
+  assert.equal(restartServed(undefined, 4), false)
+})
+
+test('the summary says what came of each host, and the pull says what moved', () => {
+  assert.equal(outcomeLine({ name: 'app', result: 'restarted', seconds: 4 }), 'app — restarted in 4s')
+  assert.equal(
+    outcomeLine({ name: 'api', result: 'failed', reason: 'no answer in 20s' }),
+    'api — no answer in 20s',
+  )
+  assert.equal(
+    outcomeLine({ name: 'web', result: 'held', reason: 'tried 3 min ago' }),
+    'web — held, tried 3 min ago',
+  )
+  assert.equal(outcomeLine({ name: 'me', result: 'self' }), 'me — this window restarts itself')
+  // A failure with no reason still says it did not come back.
+  assert.equal(outcomeLine({ name: 'x', result: 'failed' }), 'x — did not come back')
+  const pull = (over: Partial<Extract<PullResult, { ok: true }>>): PullResult => ({
+    ok: true,
+    from: 'aaaaaaa',
+    to: 'bbbbbbb',
+    commits: 2,
+    install: 'skipped',
+    ...over,
+  })
+  assert.equal(pullLine(pull({})), 'updated 2 commits (aaaaaaa → bbbbbbb)')
+  assert.equal(
+    pullLine(pull({ commits: 1, install: 'done' })),
+    'updated 1 commit (aaaaaaa → bbbbbbb) · packages installed',
+  )
+  assert.equal(pullLine(pull({ install: 'failed' })), 'updated 2 commits (aaaaaaa → bbbbbbb) · install failed')
+  // A refusal is reported whole: it is what stopped the rest of the click.
+  assert.equal(
+    pullLine({ ok: false, refused: 'The clone has uncommitted changes' }),
+    'refused: The clone has uncommitted changes',
+  )
+})
+
+test('how long ago a restart was tried, in the words of a line', () => {
+  const now = 1_700_000_000_000
+  assert.equal(ago(now - 1_000, now), 'just now')
+  assert.equal(ago(now - 42_000, now), '42s ago')
+  assert.equal(ago(now - 3 * 60_000, now), '3 min ago')
+  assert.equal(ago(now - 2 * 3_600_000, now), '2h ago')
+  // A stamp from the future never reads as a negative time.
+  assert.equal(ago(now + 5_000, now), 'just now')
 })

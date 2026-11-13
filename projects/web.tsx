@@ -41,6 +41,7 @@
 import {
   CheckIcon,
   ChevronRightIcon,
+  CircleArrowUpIcon,
   CopyIcon,
   EyeOffIcon,
   LoaderCircleIcon,
@@ -66,6 +67,7 @@ import {
   useAction,
   useCopy,
   useNow,
+  useRestart,
   useStore,
   useViewport,
 } from '@/sdk'
@@ -75,6 +77,8 @@ import {
   initials,
   linkOf,
   measured,
+  outcomeLine,
+  pullLine,
   questionCount,
   readingWave,
   stateWord,
@@ -86,6 +90,7 @@ import {
   hasMeasurement,
   questionsTitle,
   tileTitle,
+  updateTitle,
   WAVE_INTERVAL,
 } from './projects.ts'
 import type { Presence } from './projects.ts'
@@ -98,6 +103,7 @@ import type {
   StopResult,
   Section,
   Splash,
+  UpdateReport,
 } from './types.ts'
 
 /** `{ measure?: false }` → this machine's projects. The rail asks the cheap read: no tile shows a number. */
@@ -126,6 +132,12 @@ const CreateAction = actionRef<{ path: string }, CreateResult>('projects', 'crea
 
 /** `{ enabled }` → turns the splash animation on or off in this machine's settings. */
 const SplashAction = actionRef<{ enabled: boolean }, Splash>('projects', 'splash')
+
+/**
+ * `{}` → pulls the shared clone once and restarts every host of the machine that runs code the clone has
+ * moved past. A user-only action: this is a click, never an agent's call.
+ */
+const UpdateAllAction = actionRef<Record<string, never>, UpdateReport>('projects', 'update')
 
 /** How often the local reading of this window's own project is refreshed, so its dot keeps moving while
  * it works (the numbers come from this host, not from a request). */
@@ -259,6 +271,11 @@ function Column() {
     }
   }
   const stale = failed ?? (shown ? undefined : error ? error.message : undefined)
+  // What the button at the foot of the rail promises: the clone as `list` read it (the shared clone, so any
+  // reading does) and the hosts the wave saw running code the clone has moved past. Nothing is asked here:
+  // the button appears from a reading the rail was going to make anyway.
+  const restarting = rows.filter((project) => project.restart === true).length
+  const updating = updateTitle({ behind: shown?.clone?.behind, restart: restarting })
   return (
     <nav
       aria-label="Projects"
@@ -328,6 +345,9 @@ function Column() {
             )}
           />
         </Icon>
+        {/* Only when there is something to do: the clone is behind origin, or a host of this machine
+            answered that the clone has moved past it. */}
+        {updating && <UpdateButton label={updating} onChanged={refresh} />}
         <Icon
           className="size-6"
           label="New project"
@@ -340,6 +360,150 @@ function Column() {
       </div>
       <NewProject onChanged={refresh} onOpenChange={setCreating} open={creating} />
     </nav>
+  )
+}
+
+/**
+ * The update button at the foot of the rail — **update and restart the machine** — present only when there is
+ * something to do (its label comes from `updateTitle`). One click pulls the shared clone once and restarts,
+ * one at a time, every host that runs code the clone has moved past. This window's own host is the exception:
+ * the process answering the click cannot swap itself, so the action says so (`restartSelf`) and the window
+ * asks the SDK's `restart()`, which the core swaps with its own rollback.
+ *
+ * What came of it is the panel beside the button, in the words of the action: the pull (or the whole refusal,
+ * when it refused — nothing was restarted then), one line per host, and the window's own swap while it runs
+ * or why it was rolled back. A host that did not come back is a line in red: it is never called ready.
+ */
+function UpdateButton({ label, onChanged }: { label: string; onChanged: () => Promise<unknown> }) {
+  const [pending, setPending] = useState(false)
+  const [report, setReport] = useState<UpdateReport>()
+  const [error, setError] = useState<string>()
+  const [open, setOpen] = useState(false)
+  const [anchor, setAnchor] = useState<CSSProperties>()
+  const frame = useRef<HTMLDivElement>(null)
+  const exit = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const restart = useRestart()
+  useEffect(() => () => clearTimeout(exit.current), [])
+
+  const close = () => {
+    clearTimeout(exit.current)
+    setOpen(false)
+  }
+
+  /** Beside the button and upwards: the foot of the rail is at the bottom of the window. */
+  const openPanel = () => {
+    const box = frame.current?.getBoundingClientRect()
+    if (box) setAnchor({ left: box.right + 8, bottom: Math.max(8, window.innerHeight - box.bottom) })
+    setOpen(true)
+  }
+
+  /** Leaving the button and its panel closes it, with the usual moment of grace over the gap between them. */
+  const leave = () => {
+    clearTimeout(exit.current)
+    exit.current = setTimeout(close, 200)
+  }
+
+  useEffect(() => {
+    if (!open) return undefined
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close()
+    }
+    const onScroll = () => close()
+    document.addEventListener('keydown', onKeyDown)
+    document.addEventListener('scroll', onScroll, { capture: true, passive: true })
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      document.removeEventListener('scroll', onScroll, { capture: true })
+    }
+  }, [open])
+
+  const run = async () => {
+    if (pending) return
+    setError(undefined)
+    setReport(undefined)
+    openPanel()
+    setPending(true)
+    try {
+      const result = await api.action(UpdateAllAction, {})
+      setReport(result)
+      await onChanged()
+      // The window's own host last: the SDK asks the core to swap, and the page stays as the stream reconnects.
+      if (result.restartSelf) restart.run()
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setPending(false)
+    }
+  }
+
+  const lines = report?.projects ?? []
+  const title = `${label} — restarting a project's window interrupts the turn running in it`
+  return (
+    <div className="relative flex" onPointerLeave={leave} ref={frame}>
+      <Icon
+        className="size-6"
+        disabled={pending}
+        label={label}
+        onClick={() => void run()}
+        title={title}
+      >
+        {pending ? (
+          <LoaderCircleIcon className="size-3 animate-spin" />
+        ) : (
+          <CircleArrowUpIcon className={cn('size-3.5', error && 'text-error')} />
+        )}
+      </Icon>
+      {open && anchor && (
+        <div
+          className="fixed z-50 w-64 rounded-md border bg-popover p-3 text-popover-foreground shadow-md before:absolute before:inset-y-0 before:-left-2 before:w-2 before:content-['']"
+          data-projects-update
+          style={anchor}
+        >
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[12.5px] text-foreground">
+              {pending ? 'Updating and restarting…' : 'Update and restart'}
+            </span>
+            {report?.pull && (
+              <p
+                className={cn(
+                  'text-[10.5px] leading-relaxed break-words',
+                  report.pull.ok ? 'font-mono text-muted-foreground' : 'text-error',
+                )}
+              >
+                {pullLine(report.pull)}
+              </p>
+            )}
+            {lines.map((outcome) => (
+              <p
+                className={cn(
+                  'font-mono text-[10.5px] leading-relaxed break-words',
+                  outcome.result === 'restarted' && 'text-success',
+                  outcome.result === 'failed' && 'text-error',
+                  (outcome.result === 'held' || outcome.result === 'self') &&
+                    'text-muted-foreground',
+                )}
+                key={`${outcome.name}-${outcome.result}`}
+              >
+                {outcomeLine(outcome)}
+              </p>
+            ))}
+            {report && !report.pull && lines.length === 0 && !pending && (
+              <p className="font-mono text-[10.5px] text-muted-foreground/70">nothing to restart</p>
+            )}
+            {pending && !report?.pull && lines.length === 0 && (
+              <p className="font-mono text-[10.5px] text-muted-foreground/70">asking the hosts…</p>
+            )}
+            {restart.busy && (
+              <p className="font-mono text-[10.5px] text-brand">this window is swapping its core…</p>
+            )}
+            {restart.error && (
+              <p className="text-[10.5px] leading-relaxed break-words text-error">{restart.error}</p>
+            )}
+            {error && <p className="text-[10.5px] leading-relaxed break-words text-error">{error}</p>}
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 

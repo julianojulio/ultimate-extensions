@@ -2,7 +2,9 @@
 
 A column on the left edge of the window, one tile per project: running hosts on top, stopped ones
 below, each with a presence dot and the number of unanswered questions. One click opens a project or
-brings it up.
+brings it up. When the clone Ultimate runs from has moved — or a host of this machine is still running
+the code from before it did — a button at the foot of the rail updates the clone once and restarts every
+host that needs it.
 
 ![The rail on the left edge](screenshots/rail.png)
 
@@ -54,6 +56,50 @@ On the phone there is no rail: the same list, compact, stays in the sidebar.
   leaves the rail and the project's conversations stay where they are. Nothing is deleted; the panel
   says how to bring it back.
 - **Turn the splash on or off** — the switch at the bottom of the rail. One click, and one click back.
+- **Update and restart the machine** — the button at the bottom of the rail, beside `⟳`, which appears
+  only when there is something to do. See below.
+
+## Update and restart the machine
+
+Every project window of this machine reads the same clone of Ultimate, so one update brings them all
+forward — but each of them has to be *restarted* to run it, and the ones running `server/` code carry the
+old code until then. One host can do that for all of them.
+
+The button at the foot of the rail is there only when there is something to do, and its tooltip says what
+(`Update and restart: update 5 commits · restart 2 projects`). One click does, in this order:
+
+1. **Updates the clone once**, through Ultimate's own update: fetch, fast-forward, and an install when the
+   lockfile asks for one. This extension never runs `git`, `pnpm` or the clone's lock itself. If the update
+   **refuses** — uncommitted changes in the clone, another branch, a diverged branch, the lander landing —
+   the refusal is shown whole and **nothing is restarted**: no host comes back onto a clone that did not
+   move. (A clone with nothing to bring in is not updated at all, so a dirty checkout does not block the
+   restarts.)
+2. **Asks every host of the machine** whether it is still running code the clone has moved past, and puts
+   the ones that are in the list.
+3. **Restarts them one at a time**, never five at once, and waits for each: the supervisor type-checks the new
+   core and answers only when it is prepared (up to two minutes), and the port keeps answering throughout the
+   swap with the old process — so what counts as back is the generation that was announced actually serving,
+   within 20 seconds. A host that does not get there is reported, never called ready.
+4. **This window last**, through the SDK: the process answering the click cannot swap itself, so the window
+   asks the core, which swaps and rolls back if the new one does not activate.
+
+What came of it is a panel beside the button: the pull, one line per project (`billing-app — restarted in
+4s`, `api — no answer in 20s`), and any rollback of this window. The same host on the same build is not
+tried twice inside ten minutes — a host that came back still old for another reason turns up again later
+instead of restarting in a loop.
+
+![The button at the foot of the rail and what one click reported](screenshots/update.png)
+
+What to keep in mind:
+
+- **Restarting another window interrupts the turn running there.** The agent resumes from its checkpoint
+  once the new process is up — nothing is lost, but the answer waits for the restart.
+- **A host that does not come back stays red.** Its tile goes `unavailable` with the reason in the panel,
+  and the summary says `no answer in 20s`. Nothing retries it on its own.
+- **A dirty or diverged clone is not resolved here.** That is the update's refusal, and a diverged clone has
+  its own `Update with @ultimate` card.
+- **Nothing is pushed, and nothing is fetched by hand.** The button updates and restarts; it never touches
+  your branches, and a project without a commit of its own is not affected.
 
 ## Configuration
 
@@ -119,6 +165,21 @@ A home in the list that is not a project of this machine hides nothing; a list t
 file that cannot be read whole, hides nobody — and a `forget…` that would have to rewrite such a file
 refuses without writing anything.
 
+### The restarts that were tried
+
+A third file of its own, `~/.ultimate/projects-restarts.json`, is the anti-loop of the update button: one
+line per host and build it tried to restart, and when.
+
+```json
+{ "/home/juliano/.ultimate/projects/billing-app-1a2b3c4d@3f2a91c0d4b8": 1770000000000 }
+```
+
+The key is the project's **home** plus the build id of the process that was running (a host that restarted
+comes back on another build, so it gets a new line). The stamp is written before the first restart, the
+entries older than ten minutes are dropped on every click, and a file that cannot be read whole is read as
+no attempt at all. Deleting it is safe: it only means the next click may retry a host it would have left
+alone.
+
 ## Actions
 
 For agents and automation, one line each:
@@ -128,7 +189,12 @@ For agents and automation, one line each:
 - `shown` — no arguments: stamps this project in `~/.ultimate/projects-shown.json`, which is what orders
   the rail. The rail calls it once per page load.
 - `measure` — `{ name }`: that project measured now, with the time of the answer.
-- `state` — this host only: working conversations and open questions; another host asks it.
+- `state` — this host only: working conversations and open questions, its build and generation, and whether
+  the clone has moved past it; another host asks it.
+- `update` — no arguments: updates the clone once through Ultimate's update and restarts, one at a time,
+  every host of the machine that answered that the clone has moved past it. Returns the pull and one result
+  per host; `restartSelf: true` when this window's own host is among them (the window asks the SDK to swap).
+  Refused by an agent, like `stop`.
 - `start` — `{ name }`: brings that host up, and returns when it answers.
 - `create` — `{ path }`: brings up the host of a new folder and returns the new project; a forgotten
   project's folder comes back to the rail (`unhidden: true`).
@@ -138,8 +204,9 @@ For agents and automation, one line each:
   up (stop it first).
 - `splash` — `{ enabled }`: turns the splash animation on or off in this machine's settings.
 
-`stop`, `create`, `forget` and `splash` are user actions: an agent calling them is refused, so nothing
-stops a host, creates or hides a project, or flips this machine's splash behind the screen.
+`stop`, `create`, `forget`, `splash` and `update` are user actions: an agent calling them is refused, so
+nothing stops a host, creates or hides a project, flips this machine's splash behind the screen — or
+restarts every window of the machine — behind the screen.
 
 ## What it does not do
 
@@ -149,4 +216,7 @@ stops a host, creates or hides a project, or flips this machine's splash behind 
 - It does not delete anything: a forgotten project is hidden from this rail, and its home — with the
   conversations — stays where it was.
 - It does not kill a host it did not start without asking.
+- It does not run `git` or `pnpm` itself, and it never pushes: the update button asks Ultimate's update,
+  which refuses a dirty, switched or diverged clone instead of resolving it.
+- It does not restart the window that clicked it directly: that window asks the core to swap itself.
 - It does not reach another computer: only what runs on this one, on loopback.
