@@ -100,8 +100,8 @@ What to keep in mind:
   and the summary says `no answer in 20s`. Nothing retries it on its own.
 - **A dirty or diverged clone is not resolved here.** That is the update's refusal, and a diverged clone has
   its own `Update with @ultimate` card.
-- **Nothing is pushed, and nothing is fetched by hand.** The button updates and restarts; it never touches
-  your branches, and a project without a commit of its own is not affected.
+- **Nothing is pushed.** The button fetches, fast-forwards and restarts; it never touches your branches,
+  never resolves a conflict and never resets anything.
 
 ## Configuration
 
