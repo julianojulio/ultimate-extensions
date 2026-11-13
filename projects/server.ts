@@ -1020,8 +1020,9 @@ async function candidatesOf(ctx: Context, signal: AbortSignal): Promise<Candidat
  * and the one its `admit` accepts. The supervisor type-checks and prepares the new core before it answers `202`
  * with the generation it is about to serve, and keeps proxying to the **old** core until the new one is up — so
  * the port answering proves nothing, and the proof is that the announced generation is the one answering
- * `state` now. A host that does not come back in the deadline of a bring-up is not ready, and its reason says
- * which of the two silences it was.
+ * `state` now. A host that does not come back is not ready, and its reason says which of the two silences it
+ * was: the answer that never came (two minutes, the swap's own) or the generation that never served (twenty
+ * seconds, counted from the answer, since the type-checking before it is not time the new core had).
  */
 async function restartHost(
   target: { name: string; origin: string },
