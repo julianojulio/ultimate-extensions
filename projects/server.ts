@@ -183,9 +183,13 @@ const Messages = { name: 'messages' } as const
 
 /**
  * The `update` service, which this extension **wants** and never provides: it says how far the clone is
- * behind and whether this process runs code the clone has moved past. The pull itself is that extension's
- * `update` action, called through `host.invoke` — this extension never touches git, pnpm or the clone's
- * lock.
+ * behind and whether this process runs code the clone has moved past. The pull itself is that extension's own
+ * `update` action, called through `host.invoke` — this extension never touches git, pnpm or the clone's lock.
+ *
+ * The names are the contract, and they are mirrored here because the `update` extension lives in the Ultimate
+ * clone and this one lives outside it (the same way the `messages` service above is mirrored): the service
+ * `update.state()`, the actions `update/update` and `update/check`, and the pull's answer as `PullResult` in
+ * `types.ts`. A rename in `extensions/update/{api,refs}.ts` of the clone breaks these three silently.
  */
 interface UpdateService {
   state(): Promise<{
@@ -997,7 +1001,11 @@ async function candidatesOf(ctx: Context, signal: AbortSignal): Promise<Candidat
         home: row.home,
         self: false,
         origin,
-        restart: refreshed ?? answer?.restart,
+        // A host that did not answer `state` is not a candidate even when its `check` says it owes a restart:
+        // its build and generation are what the attempt is stamped under and what proves it back, and the rail
+        // does not count it either (`list` shows it as unavailable). Restarting it blind would be reported as a
+        // failure whatever happens.
+        ...(answer === undefined ? {} : { restart: refreshed ?? answer.restart }),
         ...(answer?.build ? { build: answer.build } : {}),
         ...(answer?.generation === undefined ? {} : { generation: answer.generation }),
       }
@@ -1040,7 +1048,10 @@ async function restartHost(
     const announced = asCount(body.generation)
     if (announced === null)
       return { name: target.name, result: 'failed', reason: 'the answer named no generation' }
-    const deadline = started + START_WAIT
+    // The serving deadline starts **now**, when the new core is prepared: the time the supervisor spent
+    // type-checking is not time the new generation had to serve, and a slow acceptance must not turn a host
+    // that came back into a failure.
+    const deadline = Date.now() + START_WAIT
     let answered = false
     for (;;) {
       const answer = await ask(target.origin, signal).catch(() => undefined)
@@ -1320,17 +1331,19 @@ export const actions = {
     const projects: RestartOutcome[] = []
     let restartSelf = false
     for (const target of plan) {
-      if (target.self) {
-        restartSelf = true
-        projects.push({ name: target.name, result: 'self' })
-        continue
-      }
+      // Held first, this window's own host included: the anti-loop is about the pair home+build, not about who
+      // restarts it, so a swap that was rolled back is not asked for again inside the window.
       if (target.held !== undefined) {
         projects.push({
           name: target.name,
           result: 'held',
           reason: `tried ${ago(target.held, now)}`,
         })
+        continue
+      }
+      if (target.self) {
+        restartSelf = true
+        projects.push({ name: target.name, result: 'self' })
         continue
       }
       if (!target.origin) continue

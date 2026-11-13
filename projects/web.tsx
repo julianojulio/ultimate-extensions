@@ -425,6 +425,10 @@ function UpdateButton({
     exit.current = setTimeout(close, 200)
   }
 
+  /** Reaching the panel cancels that moment: it is 8px to the right of a 24px button, and its lines are to be
+   * read and selected, not passed over. */
+  const enter = () => clearTimeout(exit.current)
+
   useEffect(() => {
     if (!open) return undefined
     const onKeyDown = (event: KeyboardEvent) => {
@@ -464,7 +468,7 @@ function UpdateButton({
     ? `${label} — restarting a project's window interrupts the turn running in it`
     : 'Update the clone and restart every project that runs old code'
   return (
-    <div className="relative flex" onPointerLeave={leave} ref={frame}>
+    <div className="relative flex" onPointerEnter={enter} onPointerLeave={leave} ref={frame}>
       <Icon
         className="size-6"
         disabled={pending}

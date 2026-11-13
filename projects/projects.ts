@@ -843,17 +843,27 @@ export function restartServed(state: { generation?: number } | undefined, target
 }
 
 /** The line of a pull, as the summary shows it: what moved, and whether an install came with it. A refusal
- * is reported whole, with nothing cut. */
+ * is reported whole, with nothing cut, and a failed install carries the line that says why. */
 export function pullLine(pull: PullResult): string {
   if (!pull.ok) return `refused: ${pull.refused}`
   const commits = `${pull.commits} ${pull.commits === 1 ? 'commit' : 'commits'}`
+  const failure = pull.install === 'failed' ? lastLine(pull.installError) : undefined
   const install =
     pull.install === 'done'
       ? ' · packages installed'
       : pull.install === 'failed'
-        ? ' · install failed'
+        ? ` · install failed${failure ? `: ${failure}` : ''}`
         : ''
   return `updated ${commits} (${pull.from} → ${pull.to})${install}`
+}
+
+/** The last line that says anything of an output, which is where a package manager puts its reason. */
+function lastLine(output: string | undefined): string | undefined {
+  return output
+    ?.split('\n')
+    .filter((line) => line.trim())
+    .pop()
+    ?.slice(0, 200)
 }
 
 /**
@@ -863,7 +873,9 @@ export function pullLine(pull: PullResult): string {
  */
 export function outcomeLine(outcome: RestartOutcome): string {
   if (outcome.result === 'restarted')
-    return `${outcome.name} — restarted in ${outcome.seconds ?? 0}s`
+    return outcome.seconds === undefined
+      ? `${outcome.name} — restarted`
+      : `${outcome.name} — restarted in ${outcome.seconds}s`
   if (outcome.result === 'held') return `${outcome.name} — held, ${outcome.reason ?? 'tried recently'}`
   if (outcome.result === 'self') return `${outcome.name} — this window restarts itself`
   return `${outcome.name} — ${outcome.reason ?? 'did not come back'}`

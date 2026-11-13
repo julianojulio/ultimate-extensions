@@ -913,6 +913,16 @@ test('a host that restarted comes back on another build, so its stamp does not h
   // The same host on the same build is the one the window holds — and the plan says since when.
   const [held] = restartPlan([candidate({ name: 'app', home: '/h/app', build: 'old' })], attempts, now)
   assert.equal(held.held, now - 60_000)
+  // This window's own host is held like any other: a swap that was rolled back does not come back on another
+  // build, and asking for it again inside the window would loop.
+  const key = restartKey('/h/me', 'build-1')
+  const [self] = restartPlan(
+    [candidate({ name: 'me', home: '/h/me', self: true, origin: undefined })],
+    { [key]: now - 120_000 },
+    now,
+  )
+  assert.equal(self.self, true)
+  assert.equal(self.held, now - 120_000)
 })
 
 test('the attempts file keeps what is inside the window and drops the rest', () => {
@@ -993,6 +1003,14 @@ test('the summary says what came of each host, and the pull says what moved', ()
     'updated 1 commit (aaaaaaa → bbbbbbb) · packages installed',
   )
   assert.equal(pullLine(pull({ install: 'failed' })), 'updated 2 commits (aaaaaaa → bbbbbbb) · install failed')
+  // A failed install carries the line that says why — the last thing pnpm wrote, not a made-up summary.
+  assert.equal(
+    pullLine(pull({ install: 'failed', installError: 'progress\nERR_PNPM_LOCKFILE_BREAKING_CHANGE\n' })),
+    'updated 2 commits (aaaaaaa → bbbbbbb) · install failed: ERR_PNPM_LOCKFILE_BREAKING_CHANGE',
+  )
+  // A restart whose seconds did not come says it restarted, never "in 0s": an invented zero is the one thing
+  // this extension must not print.
+  assert.equal(outcomeLine({ name: 'app', result: 'restarted' }), 'app — restarted')
   // A refusal is reported whole: it is what stopped the rest of the click.
   assert.equal(
     pullLine({ ok: false, refused: 'The clone has uncommitted changes' }),

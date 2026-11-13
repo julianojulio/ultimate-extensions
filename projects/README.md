@@ -77,16 +77,18 @@ The button at the foot of the rail is there only when there is something to do, 
 2. **Asks every host of the machine** whether it is still running code the clone has moved past, and puts
    the ones that are in the list.
 3. **Restarts them one at a time**, never five at once, and waits for each: the supervisor type-checks the new
-   core and answers only when it is prepared (up to two minutes), and the port keeps answering throughout the
-   swap with the old process — so what counts as back is the generation that was announced actually serving,
-   within 20 seconds. A host that does not get there is reported, never called ready.
+   core and answers only when it is prepared (up to two minutes), and then the announced generation has 20
+   seconds to be the one serving. The port keeps answering throughout the swap with the old process, so the
+   port alone would call every restart done — and a host that does not get there is reported, never called
+   ready.
 4. **This window last**, through the SDK: the process answering the click cannot swap itself, so the window
    asks the core, which swaps and rolls back if the new one does not activate.
 
-What came of it is a panel beside the button: the pull, one line per project (`billing-app — restarted in
-4s`, `api — no answer in 20s`), and any rollback of this window. The same host on the same build is not
-tried twice inside ten minutes — a host that came back still old for another reason turns up again later
-instead of restarting in a loop.
+What came of it is a panel beside the button: the pull (with the install's own line when it failed), one
+line per project (`billing-app — restarted in 4s`, `api — no answer in 20s`), and any rollback of this
+window. The same host on the same build is not tried twice inside ten minutes, this window's own included —
+a swap that was rolled back is not asked for again inside the window. A host that came back still old for
+another reason turns up again later instead of restarting in a loop.
 
 ![The button at the foot of the rail and what one click reported](screenshots/update.png)
 
@@ -94,7 +96,7 @@ What to keep in mind:
 
 - **Restarting another window interrupts the turn running there.** The agent resumes from its checkpoint
   once the new process is up — nothing is lost, but the answer waits for the restart.
-- **A host that does not come back stays red.** Its tile goes `unavailable` with the reason in the panel,
+- **A host that does not come back stays `unavailable`.** Its tile keeps the hollow dot, its panel says why,
   and the summary says `no answer in 20s`. Nothing retries it on its own.
 - **A dirty or diverged clone is not resolved here.** That is the update's refusal, and a diverged clone has
   its own `Update with @ultimate` card.
