@@ -49,11 +49,13 @@
  *
  * The `update` action is the button at the foot of the rail: it pulls the shared clone once through the
  * `update` extension's own action — this extension never runs git, pnpm or the clone's lock — and then
- * restarts, one at a time, every host of the machine that answered that the clone has moved past it. The
- * current process is never restarted from here (it is answering the click): the answer carries
- * `restartSelf` and the window asks the SDK's `restart()`. Each host is proved back by the **generation**
- * the supervisor announced, because the port keeps answering throughout the swap with the old process; an
- * attempt is stamped per home+build so the same pair is not tried twice inside ten minutes.
+ * restarts, one at a time, every host of the machine that answered that the clone has moved past it. A
+ * refused pull stops the click, except when the clone has **diverged**: that one is clean and committed and
+ * only lacks the fast-forward, so the restarts go on onto the code already on disk. The current process is
+ * never restarted from here (it is answering the click): the answer carries `restartSelf` and the window
+ * asks the SDK's `restart()`. Each host is proved back by the **generation** the supervisor announced,
+ * because the port keeps answering throughout the swap with the old process; an attempt is stamped per
+ * home+build so the same pair is not tried twice inside ten minutes.
  *
  * Outside the homes of the projects it brought up, this extension writes **three** files, all in this
  * machine's `~/.ultimate/`:
@@ -96,6 +98,7 @@ import { defineExtension } from '@earendil-works/pi-durable'
 import {
   adjustHidden,
   adjustSplash,
+  afterRefusal,
   ago,
   startArgs,
   absolutePath,
@@ -324,11 +327,12 @@ function asCount(value: unknown): number | null {
 /**
  * The clone as the `update` extension last checked it: absent when that extension is not enabled, or when it
  * did not answer — a rail that cannot read it shows no button, rather than one that does nothing. `restart`
- * is that extension's answer about **this** process, which is why the same field is asked of every host.
+ * is that extension's answer about **this** process, which is why the same field is asked of every host. What
+ * it refuses travels with the rest: the button says, before the click, that a diverged clone is not updated.
  */
 async function cloneState(
   ctx: Context,
-): Promise<{ behind: number; install: boolean; restart: boolean } | undefined> {
+): Promise<{ behind: number; install: boolean; restart: boolean; refused?: string } | undefined> {
   const update = ctx.host.want<UpdateService>(Update)
   if (!update) return undefined
   try {
@@ -337,6 +341,7 @@ async function cloneState(
       behind: asCount(state.behind) ?? 0,
       install: state.install === true,
       restart: state.restart === true,
+      ...(typeof state.refused === 'string' ? { refused: state.refused } : {}),
     }
   } catch {
     return undefined
@@ -1278,8 +1283,10 @@ export const actions = {
    *
    * 1. The pull, once, through `update`'s own action (`host.invoke`): this extension never touches git,
    *    pnpm or the clone's lock, and it never brings an update of its own. It is asked only when there is
-   *    something to bring in or an install is owed (`pullOwed`); a **refusal** is handed back whole and
-   *    stops everything — nothing is restarted onto a clone that did not move.
+   *    something to bring in or an install is owed (`pullOwed`); a **refusal** is handed back whole. The one
+   *    refusal the click survives is a **diverged clone** (`afterRefusal`): it is clean and committed, the
+   *    fast-forward is all it lacks, and the restart loads the code already on disk. Every other refusal
+   *    stops everything — nothing is restarted onto a clone that is half-way through something.
    * 2. Every host of the machine asked what only it knows: does the clone run past this process?
    * 3. Those that said yes are restarted **one at a time**, in the rail's order, this window's own last and
    *    never here: the process answering this call cannot swap itself, so the answer carries `restartSelf`
@@ -1307,8 +1314,11 @@ export const actions = {
         throw new Error('The update extension is not enabled in this window, so the clone cannot be updated')
       const result = (await ctx.host.invoke('update', 'update', {}, own)) as PullResult | undefined
       pull = result ?? { ok: false, refused: 'the update extension answered nothing' }
-      // A refusal is reported as it came, and the rest of the click does not happen.
-      if (!pull.ok) return { pull, projects: [], restartSelf: false }
+      // A refusal is reported as it came, and the rest of the click does not happen — except for the clone that
+      // has diverged, which is clean and committed: the restart loads what is already on disk, and it is the one
+      // thing the machine needs from this click (see `afterRefusal`).
+      if (!pull.ok && afterRefusal(pull.refused) === 'stop')
+        return { pull, projects: [], restartSelf: false }
     }
     // After the pull this host's own view is fresh (the update refreshes it); `candidatesOf` asks every other
     // host to look again, so none of them answers with what it knew before the clone moved.

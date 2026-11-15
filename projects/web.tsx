@@ -275,7 +275,11 @@ function Column() {
   // reading does) and the hosts the wave saw running code the clone has moved past. Nothing is asked here:
   // the button appears from a reading the rail was going to make anyway.
   const restarting = rows.filter((project) => project.restart === true).length
-  const updating = updateTitle({ behind: shown?.clone?.behind, restart: restarting })
+  const updating = updateTitle({
+    behind: shown?.clone?.behind,
+    restart: restarting,
+    refused: shown?.clone?.refused,
+  })
   // The panel of the last click is worth reading even when the button's reason is gone by the time it ends —
   // every host restarted is a host that no longer asks for one. So the button stays while its panel is open,
   // and leaves with it.
@@ -376,9 +380,10 @@ function Column() {
  * the process answering the click cannot swap itself, so the action says so (`restartSelf`) and the window
  * asks the SDK's `restart()`, which the core swaps with its own rollback.
  *
- * What came of it is the panel beside the button, in the words of the action: the pull (or the whole refusal,
- * when it refused — nothing was restarted then), one line per host, and the window's own swap while it runs
- * or why it was rolled back. A host that did not come back is a line in red: it is never called ready.
+ * What came of it is the panel beside the button, in the words of the action: the pull (or the refusal, when
+ * it refused — a diverged clone is the one that refuses the pull and restarts anyway, and its line says so),
+ * one line per host, and the window's own swap while it runs or why it was rolled back. A host that did not
+ * come back is a line in red: it is never called ready.
  */
 function UpdateButton({
   label,
@@ -499,7 +504,7 @@ function UpdateButton({
                   report.pull.ok ? 'font-mono text-muted-foreground' : 'text-error',
                 )}
               >
-                {pullLine(report.pull)}
+                {pullLine(report.pull, report.projects.length > 0)}
               </p>
             )}
             {lines.map((outcome) => (

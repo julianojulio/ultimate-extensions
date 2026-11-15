@@ -81,12 +81,19 @@ export interface Section {
   clone?: Clone
 }
 
-/** The clone as the update button needs it: how far behind origin, and whether a pull owes an install. */
+/** The clone as the update button needs it: how far behind origin, whether a pull owes an install, and what
+ * the clone refuses. */
 export interface Clone {
   /** Commits on `origin/<branch>` the clone lacks, as of the last fetch. */
   behind: number
   /** The lockfile names packages that are not installed: the next pull installs them. */
   install: boolean
+  /**
+   * Why that check refused the pull — uncommitted changes, another branch, a diverged branch, the lander
+   * landing. Only a diverged clone goes on to the restart (`afterRefusal`), and it is the one the button
+   * says it will not update.
+   */
+  refused?: string
 }
 
 /** What the `splash` action left: the animation on or off in this machine's settings. */
@@ -142,7 +149,8 @@ export interface State {
 
 /**
  * What the `update` extension answered when this button pulled the clone: its own `update` action, verbatim,
- * as much of it as this extension reports. A refusal is reported whole and stops the rest.
+ * as much of it as this extension reports. A refusal is reported whole, and it stops the rest of the click —
+ * except a clone that has diverged, whose restart does not need the fast-forward that was refused.
  */
 export type PullResult =
   | {
@@ -175,7 +183,11 @@ export interface RestartOutcome {
  * `projects` with a refused `pull` is the refusal stopping everything.
  */
 export interface UpdateReport {
-  /** The pull, when one was owed. A refusal stops the rest: nothing is restarted onto a clone that did not move. */
+  /**
+   * The pull, when one was owed. A refusal stops the rest — nothing is restarted onto a clone that did not
+   * move —, except the divergence one: that clone is clean and committed, and the hosts still restart onto
+   * the code already on disk.
+   */
   pull?: PullResult
   /** Each host, in the order it was tried, this window's own last. */
   projects: RestartOutcome[]

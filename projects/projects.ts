@@ -4,9 +4,9 @@
  * new project will occupy, the port that only the panel shows, what the stop button decides, what the
  * splash button, the `forget` button and a rail that was just shown write to this machine — the settings and
  * the stamps file —, and what the update button at the foot of the rail promises and does: who enters the
- * restart list, which of them the anti-loop window holds back, and the sentence of each result. Nothing
- * here reads the machine, opens a process or makes a request — `projects.test.ts` covers all of it with
- * fixtures.
+ * restart list, which of them the anti-loop window holds back, which refusal the click survives (a clone
+ * that has diverged) and the sentence of each result. Nothing here reads the machine, opens a process or
+ * makes a request — `projects.test.ts` covers all of it with fixtures.
  *
  * The state is never the colour alone: the rail writes `running`/`stopped` in each tile's panel, the
  * group is the position (running above the line, stopped below) and what was measured comes as a
@@ -754,20 +754,52 @@ export function pullOwed(clone: Clone | undefined): boolean {
 }
 
 /**
+ * The sentence the update's own check writes when the clone has commits of its own and origin has more
+ * (`<branch> has diverged from origin/<branch>`, from `lib/fast-forward.ts` of the Ultimate clone): the one
+ * refusal that says nothing is half-done.
+ */
+const DIVERGED = /^(\S+) has diverged from origin\/\1$/
+
+/**
+ * What the click does after the pull refused: `restart` for a diverged clone and `stop` for every other
+ * refusal. A diverged clone is clean and committed — the only thing it lacks is the fast-forward, which the
+ * restart does not need, and what is already on disk is what the machine should be running. Every other
+ * refusal is the clone in the middle of something (uncommitted changes, another branch, the lander landing,
+ * another Ultimate holding its lock), and a host coming back onto half of it is worse than the click stopping.
+ */
+export function afterRefusal(refused: string | undefined): 'restart' | 'stop' {
+  return refused !== undefined && DIVERGED.test(refused) ? 'restart' : 'stop'
+}
+
+/**
  * What the button promises, in its `title` and `aria-label`: what the click updates and how many projects
  * it restarts — `Update and restart: update 5 commits · restart 2 projects`. Nothing to do is `undefined`:
  * the button is not on the rail at all.
+ *
+ * A clone that has diverged is the one case where the click does not update: the pull is refused and the
+ * restarts go on, so the button promises what it will do and why the update is not part of it — `Restart
+ * only: restart 2 projects · main has diverged from origin/main, so the update waits`. With no host to
+ * restart in that state the click can do nothing, and there is no button.
  */
 export function updateTitle({
   behind = 0,
   restart = 0,
+  refused,
 }: {
   behind?: number
   restart?: number
+  /** What the `update` extension last said the clone refuses, from the same reading as `behind`. */
+  refused?: string
 }): string | undefined {
+  const restarts =
+    restart > 0 ? `restart ${restart} ${restart === 1 ? 'project' : 'projects'}` : undefined
+  if (behind > 0 && afterRefusal(refused) === 'restart')
+    return restarts && refused
+      ? `Restart only: ${restarts} · ${refused}, so the update waits`
+      : undefined
   const parts: string[] = []
   if (behind > 0) parts.push(`update ${behind} ${behind === 1 ? 'commit' : 'commits'}`)
-  if (restart > 0) parts.push(`restart ${restart} ${restart === 1 ? 'project' : 'projects'}`)
+  if (restarts) parts.push(restarts)
   return parts.length ? `Update and restart: ${parts.join(' · ')}` : undefined
 }
 
@@ -843,9 +875,11 @@ export function restartServed(state: { generation?: number } | undefined, target
 }
 
 /** The line of a pull, as the summary shows it: what moved, and whether an install came with it. A refusal
- * is reported whole, with nothing cut, and a failed install carries the line that says why. */
-export function pullLine(pull: PullResult): string {
-  if (!pull.ok) return `refused: ${pull.refused}`
+ * is reported whole, with nothing cut, and a failed install carries the line that says why. `wentOn` is the
+ * one refusal the click survives — a diverged clone — and the line then says what happened instead. */
+export function pullLine(pull: PullResult, wentOn = false): string {
+  if (!pull.ok)
+    return `pull refused: ${pull.refused}${wentOn ? ' — restarting what is already here' : ''}`
   const commits = `${pull.commits} ${pull.commits === 1 ? 'commit' : 'commits'}`
   const failure = pull.install === 'failed' ? lastLine(pull.installError) : undefined
   const install =

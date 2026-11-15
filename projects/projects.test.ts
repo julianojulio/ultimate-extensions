@@ -89,6 +89,7 @@ import {
   outcomeLine,
   pullLine,
   pullOwed,
+  afterRefusal,
   restartKey,
   restartLog,
   restartPlan,
@@ -965,6 +966,49 @@ test('the button promises what it counts, and is not on the rail when there is n
   )
   assert.equal(updateTitle({ restart: 3 }), 'Update and restart: restart 3 projects')
   assert.equal(updateTitle({ behind: 1 }), 'Update and restart: update 1 commit')
+  // A diverged clone is the pull that will be refused: the button promises the restart it will do, and says
+  // why the update is not part of it — it never promises an update the pull would refuse.
+  assert.equal(
+    updateTitle({ behind: 1, restart: 2, refused: 'main has diverged from origin/main' }),
+    'Restart only: restart 2 projects · main has diverged from origin/main, so the update waits',
+  )
+  // With nothing to restart, the click would only be refused: no button at all.
+  assert.equal(
+    updateTitle({ behind: 1, restart: 0, refused: 'main has diverged from origin/main' }),
+    undefined,
+  )
+  // Every other refusal is the clone in the middle of something, and the title stays what it was: the
+  // refusal is what the click reports instead of doing.
+  assert.equal(
+    updateTitle({ behind: 1, restart: 1, refused: 'The checkout has uncommitted changes' }),
+    'Update and restart: update 1 commit · restart 1 project',
+  )
+  // A refusal with nothing behind it does not make the pull part of the promise either.
+  assert.equal(
+    updateTitle({ restart: 1, refused: 'main has diverged from origin/main' }),
+    'Update and restart: restart 1 project',
+  )
+})
+
+test('only a diverged clone goes on after the refusal: everything else is the clone mid-way', () => {
+  // The sentence the update's own check writes when the clone has commits upstream lacks and origin has more.
+  assert.equal(afterRefusal('main has diverged from origin/main'), 'restart')
+  assert.equal(afterRefusal('ultimate/98df0c-13368 has diverged from origin/ultimate/98df0c-13368'), 'restart')
+  // Every other refusal leaves the clone half-way through something: uncommitted work, another branch, the
+  // lander landing, another Ultimate holding the lock, an update that answered nothing.
+  for (const refused of [
+    undefined,
+    '',
+    'The checkout has uncommitted changes',
+    'The checkout is on a detached HEAD, not main',
+    'The lander is landing into this clone',
+    'Another Ultimate is updating this clone',
+    'the update extension answered nothing',
+    // A sentence about a divergence that is not the update's own is not a promise either.
+    'main has diverged from origin/dev',
+    'has diverged from origin/main',
+  ])
+    assert.equal(afterRefusal(refused), 'stop', `should stop: ${String(refused)}`)
 })
 
 test('a restart is proved by the generation that serves, not by the port', () => {
@@ -1014,7 +1058,12 @@ test('the summary says what came of each host, and the pull says what moved', ()
   // A refusal is reported whole: it is what stopped the rest of the click.
   assert.equal(
     pullLine({ ok: false, refused: 'The clone has uncommitted changes' }),
-    'refused: The clone has uncommitted changes',
+    'pull refused: The clone has uncommitted changes',
+  )
+  // The one the click survives says so: the hosts come back onto the code already on disk.
+  assert.equal(
+    pullLine({ ok: false, refused: 'main has diverged from origin/main' }, true),
+    'pull refused: main has diverged from origin/main — restarting what is already here',
   )
 })
 

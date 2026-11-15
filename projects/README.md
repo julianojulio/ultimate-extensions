@@ -70,10 +70,14 @@ The button at the foot of the rail is there only when there is something to do, 
 
 1. **Updates the clone once**, through Ultimate's own update: fetch, fast-forward, and an install when the
    lockfile asks for one. This extension never runs `git`, `pnpm` or the clone's lock itself. If the update
-   **refuses** — uncommitted changes in the clone, another branch, a diverged branch, the lander landing —
-   the refusal is shown whole and **nothing is restarted**: no host comes back onto a clone that did not
-   move. (A clone with nothing to bring in is not updated at all, so a dirty checkout does not block the
-   restarts.)
+   **refuses** — uncommitted changes in the clone, another branch, the lander landing — the refusal is shown
+   whole and **nothing is restarted**: no host comes back onto a clone that is half-way through something.
+   The one exception is a clone that has **diverged** from origin: it is clean and committed and only lacks
+   the fast-forward, which a restart does not need, so the refusal is shown (`pull refused: main has
+   diverged from origin/main — restarting what is already here`) and the rest of the click goes on. The
+   button says so before the click, too: `Restart only: restart 2 projects · main has diverged from
+   origin/main, so the update waits`. (A clone with nothing to bring in is not updated at all, so a dirty
+   checkout does not block the restarts.)
 2. **Asks every host of the machine** whether it is still running code the clone has moved past, and puts
    the ones that are in the list.
 3. **Restarts them one at a time**, never five at once, and waits for each: the supervisor type-checks the new
@@ -98,8 +102,9 @@ What to keep in mind:
   once the new process is up — nothing is lost, but the answer waits for the restart.
 - **A host that does not come back stays `unavailable`.** Its tile keeps the hollow dot, its panel says why,
   and the summary says `no answer in 20s`. Nothing retries it on its own.
-- **A dirty or diverged clone is not resolved here.** That is the update's refusal, and a diverged clone has
-  its own `Update with @ultimate` card.
+- **A dirty clone or another branch is not resolved here.** That is the update's refusal, and it stops the
+  whole click. A clone that has diverged restarts the machine anyway — what is on disk is what runs —, and
+  the merge that lets it fast-forward again is the update's own `Update with @ultimate` card.
 - **Nothing is pushed.** The button fetches, fast-forwards and restarts; it never touches your branches,
   never resolves a conflict and never resets anything.
 
