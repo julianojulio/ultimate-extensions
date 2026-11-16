@@ -9,6 +9,10 @@ working.
 
 ![The rail on the left edge](screenshots/rail.png)
 
+Ultimate ships its own `projects` extension, a switcher of running instances. This one has the same name
+and takes the same `shell.rail` slot, so it **replaces** the built-in one: remove this folder from
+`~/.ultimate/extensions/` (or `sh install.sh` in a clone without it) to get the built-in rail back.
+
 ## How it works
 
 One tile per project, drawn with its initials (`billing-app` → `BA`). This window's project comes first,
