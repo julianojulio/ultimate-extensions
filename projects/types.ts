@@ -79,6 +79,11 @@ export interface Section {
    * of this machine. Absent when that extension is not enabled, or refused to be read.
    */
   clone?: Clone
+  /**
+   * The last nightly update this machine attempted (`projects.update.at`), as the rail shows it: one line.
+   * Absent when nothing ran, when the night had nothing to say, or when the reader dismissed it.
+   */
+  nightly?: NightlyView
 }
 
 /** The clone as the update button needs it: how far behind origin, whether a pull owes an install, and what
@@ -160,6 +165,11 @@ export type PullResult =
       commits: number
       install: 'done' | 'failed' | 'skipped'
       installError?: string
+      /**
+       * What the range touches, by how it goes live (`update`'s own `Layers`). Only `bin` is read here: the
+       * supervisor is the one layer a restart cannot swap, so a nightly run says so instead of pretending.
+       */
+      layers?: { bin?: boolean }
     }
   | { ok: false; refused: string }
 
@@ -225,3 +235,68 @@ export interface ForgetResult {
 export type StopResult =
   | { stopped: true; project: Project }
   | { stopped: false; needsConfirm: true; pid: number; url?: string }
+
+/** What the `seen` action left: the morning's line was read and will not be drawn again. */
+export interface Seen {
+  seen: true
+}
+
+/**
+ * One night of the automatic update, as the machine keeps it: the turn one host of the machine took for a
+ * local day, and what came of it. It is the election and the record in one file
+ * (`~/.ultimate/projects-update-<day>.json`): the turn is a file only one host can create, and the winner
+ * rewrites it with its result.
+ */
+export interface NightlyRecord {
+  /** The local day (`YYYY-MM-DD`) this turn belongs to. */
+  day: string
+  /** The time of day the run was armed for, as the settings said it (`HH:MM`). */
+  at: string
+  /** The home of the host that took the turn: only that one writes the result, and retries. */
+  by: string
+  /** When the turn was taken (ISO). */
+  claimedAt: string
+  /** What the run did; absent while it still runs, or when the process died in the middle. */
+  result?: NightlyResult
+  /** When the one retry after a busy machine is due (ISO); absent when there is none. */
+  retryAt?: string
+  /** How many times this night ran: 1, or 2 after the retry. */
+  attempts?: number
+  /** When the report was read and put away. */
+  seenAt?: string
+}
+
+/**
+ * What came of one night. The words are composed when the run ends, so the rail only draws them: the clone
+ * and the hosts are not read again to say what happened.
+ */
+export interface NightlyResult {
+  /** `ran` updated the clone and the hosts; `busy` stepped aside; `failed` could not do the work. */
+  outcome: 'ran' | 'busy' | 'failed'
+  /** When the run (or the step aside) ended (ISO). */
+  at: string
+  /** The one line the rail shows. Absent when the night had nothing worth a line. */
+  line?: string
+  /** The detail, one line per host and of the pull, for the panel. */
+  lines?: string[]
+  /** `bin/` changed in the pull: the supervisor still runs the old one, and only a person restarts it. */
+  supervisor?: boolean
+}
+
+/**
+ * The report as the rail draws it: its one line, the detail behind it, and the two numbers the panel's
+ * sentence uses (`Last night, 03:00`). Nothing here is computed on screen.
+ */
+export interface NightlyView {
+  /** The local day the run was taken for. */
+  day: string
+  /** The hour it was armed for (`HH:MM`). */
+  at: string
+  outcome: 'ran' | 'busy' | 'failed'
+  /** The one line. */
+  line: string
+  /** The detail, one line per host and of the pull. */
+  lines: string[]
+  /** The night ended with `bin/` changed and the supervisor not restarted. */
+  supervisor?: true
+}

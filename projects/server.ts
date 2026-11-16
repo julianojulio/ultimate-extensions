@@ -57,7 +57,13 @@
  * because the port keeps answering throughout the swap with the old process; an attempt is stamped per
  * home+build so the same pair is not tried twice inside ten minutes.
  *
- * Outside the homes of the projects it brought up, this extension writes **three** files, all in this
+ * The `update` action is also the whole of the **nightly update**: `projects.update.at` of this machine's
+ * settings (`{"projects": {"update": {"at": "03:00"}}}`) arms one timer per host, and whichever host takes
+ * the night's turn runs the very same flow — this extension never has a second implementation of it. The
+ * turn is an exclusive file creation, and the night only runs when no conversation of any host of the
+ * machine is working. See "The night" below.
+ *
+ * Outside the homes of the projects it brought up, this extension writes **four** files, all in this
  * machine's `~/.ultimate/`:
  *
  * - `settings.json` — the splash animation on or off (the `splash` action) and the homes the rail hides
@@ -71,8 +77,35 @@
  * - `projects-restarts.json` — when the `update` action last tried to restart a host, by home+build
  *   (`update`): the anti-loop window. Written before the first restart, through a temporary and a `rename`,
  *   with the entries older than the window dropped, and unreadable as no attempt at all.
+ * - `projects-update-<YYYY-MM-DD>.json` — the night of the automatic update: the turn (its **creation** is
+ *   the election, so exactly one host of the machine can take it), where it stands, and what came of it.
+ *   Written through a temporary and a `rename` after the claim, and a file that cannot be read is no
+ *   record at all — never repaired, never half-read. The next night drops the older ones.
  *
- * **Nothing is deleted**: forgetting a project only adds its home to a list.
+ * **Nothing is deleted**, except those records of past nights: forgetting a project only adds its home to a
+ * list.
+ *
+ * ## The night
+ *
+ * `projects.update.at` (`HH:MM`, local time) is read on the spot, never kept: absent, nothing is armed; a
+ * value that is not a time is ignored with a notice that names it, because guessing midnight would update
+ * the machine at an hour nobody asked for. The settings' own watcher reinstalls this extension
+ * (`reloadOnSettings`), so turning the key on or off applies at once.
+ *
+ * One timer per host, armed when the harness opens (and again after every run) — no poll: the delay comes
+ * from `nightPlan`, which is also what makes a host that opens after the hour, on a day that has no run,
+ * run **at once** (the machine slept, or its window was closed). The turn is taken by creating the day's
+ * record with `O_EXCL`: seven windows arming the same hour produce one run, and the others write nothing.
+ *
+ * Before doing anything the winner asks **every** host of the machine that is up what only it knows
+ * (`state`, in parallel — the wave's own question) and steps aside when any of them reports a conversation
+ * working: it records `skipped`, and one retry follows 45 minutes later (read from the record, so a reload
+ * in between does not lose it). A host that does not answer is not working, and is not restarted either.
+ *
+ * The run is `updateAndRestart`, the click's own flow: the pull through the `update` extension's action, the
+ * restarts one at a time, this window's own host last — here, instead of the window's `restartSelf`, this
+ * host asks the harness for the core swap itself, after the record is written. A pull that touched `bin/`
+ * cannot be applied by a swap at all, and the report says so rather than pretending.
  */
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
@@ -83,6 +116,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   realpath,
   rename,
   rm,
@@ -100,6 +134,19 @@ import {
   adjustSplash,
   afterRefusal,
   ago,
+  clock,
+  localDay,
+  nightPlan,
+  nightRecord,
+  nightReport,
+  nightlyAt,
+  nightlyDays,
+  nightlyFile,
+  nightlyView,
+  retryPlan,
+  tookTurn,
+  workingNames,
+  NIGHTLY_RETRY,
   startArgs,
   absolutePath,
   command,
@@ -129,19 +176,52 @@ import type { Candidate, Planned } from './projects.ts'
 import type {
   State,
   Measurement,
+  NightlyRecord,
   Project,
   CreateResult,
   ForgetResult,
   PullResult,
   RestartOutcome,
   Shown,
+  Seen,
   StopResult,
   Section,
   Splash,
   UpdateReport,
 } from './types.ts'
 
-export default defineExtension({ name: 'projects' })
+/**
+ * This extension's facets: the actions' context (`ctx`), and the host the install-time work of the nightly
+ * update holds. The type of the default export's argument is the `host` half of the same shape, which is
+ * what the server passes to it.
+ */
+type Host = Context['host']
+
+export default function projects(host: Host) {
+  // The nightly update lives here, in the install: one timer per host process, armed from the settings as
+  // they are now, and again after every run. It is armed when the **harness opens**, not when the module
+  // loads: the night asks the other hosts and pulls the clone, and both reach an open harness (and a reload
+  // while it is open arms it at once — the previous timer is cleared first).
+  const ctx: Context = { signal: new AbortController().signal, host }
+  const state: NightlyState = {}
+  host.onOpen(async () => {
+    await armNightly(ctx, state).catch((error: unknown) =>
+      host.notice(`Nightly update: ${reason(error)}`),
+    )
+  })
+  host.onClose(async () => {
+    if (state.timer) clearTimeout(state.timer)
+    state.timer = undefined
+  })
+  return defineExtension({ name: 'projects' })
+}
+
+/**
+ * Reinstall on a live settings change: `projects.update.at` being written (or taken out) has to arm — or
+ * disarm — the timer there and then, without a restart. The writes of the `splash` and `forget` actions go
+ * through the same watcher, and cost only a reload of this extension.
+ */
+export const reloadOnSettings = true
 
 /** How long another project's host is given to answer before it is said not to have answered. */
 const WAIT = 3000
@@ -223,6 +303,14 @@ interface Context {
     invoke(name: string, action: string, args: JsonValue, signal: AbortSignal): Promise<unknown>
     /** A value shared with the next load of this extension (the semaphore model, the write queue). */
     resource<T>(key: string, create: () => T): T
+    /** A warning the user reads now: the nightly update says what it did, and why it did nothing. */
+    notice(message: string): void
+    /** Ask the harness for the verified core swap; the message says why it did not happen. */
+    restart(approved: (generation: number) => Promise<void>): Promise<string>
+    /** Work that runs each time the harness opens — where the night's one timer is armed. */
+    onOpen(callback: () => Promise<void>): void
+    /** Cleanup that runs when this facet closes, reloads or is disabled — the night's one timer. */
+    onClose(cleanup: () => Promise<void>): void
   }
 }
 
@@ -574,6 +662,15 @@ const readRestarts = () => readHint(restartsFile(userHome()), restartLog)
  * opened, the attempts which restarts it tried — and it is created on the first write.
  */
 async function writeHint(path: string, value: Record<string, number>) {
+  await writeJsonAtomic(path, value)
+}
+
+/**
+ * A JSON file of this extension written whole or not at all: through a temporary beside it and a `rename`,
+ * private from birth, following a link if the file is one. What reads it in the middle of the way never sees
+ * half a document.
+ */
+async function writeJsonAtomic(path: string, value: unknown) {
   const target = await realpath(path).catch(() => path)
   await mkdir(dirname(target), { recursive: true })
   const temporary = join(dirname(target), `.${basename(target)}.${randomUUID()}.tmp`)
@@ -1087,6 +1184,315 @@ async function restartHost(
   }
 }
 
+/**
+ * **Update and restart the machine**, once: the pull, then every host that runs old code, one at a time.
+ * It is the `update` action's own body, and the nightly update runs exactly this — the button and the night
+ * cannot drift apart, and there is one place where the refusals mean what they mean.
+ *
+ * The pull goes through the `update` extension's action (`host.invoke`): this extension never touches git,
+ * pnpm or the clone's lock. It is asked only when there is something to bring in or an install is owed
+ * (`pullOwed`), and a **refusal** is handed back whole. The one refusal it goes on from is a **diverged**
+ * clone (`afterRefusal`): clean and committed, only lacking the fast-forward, and the restart loads the
+ * code already on disk. Every other refusal stops everything — nothing is restarted onto a clone that is
+ * half-way through something.
+ *
+ * Every attempt is stamped per home+build in `~/.ultimate/projects-restarts.json` **before** the first
+ * restart, and the same pair is left alone for ten minutes: a host that came back still old for another
+ * reason turns up again later instead of looping now.
+ *
+ * It runs on its **own** deadlines, never on the caller's signal: the pull can change the extension bundle
+ * and so reload the window that clicked, and a window that reloads mid-way must not leave half the machine
+ * restarted.
+ */
+async function updateAndRestart(ctx: Context): Promise<UpdateReport> {
+  // Nothing is aborted from outside: the click was made (or the night came), and the machine's restarts are
+  // not the page's.
+  const own = new AbortController().signal
+  const update = ctx.host.want<UpdateService>(Update)
+  // Look at the clone before deciding: a fetch that is due may reveal commits, and this run should bring
+  // them in rather than leave them for the next one.
+  if (update) await ctx.host.invoke('update', 'check', {}, own).catch(() => undefined)
+  const clone = await cloneState(ctx)
+  let pull: PullResult | undefined
+  if (pullOwed(clone)) {
+    if (!update)
+      throw new Error('The update extension is not enabled in this window, so the clone cannot be updated')
+    const result = (await ctx.host.invoke('update', 'update', {}, own)) as PullResult | undefined
+    pull = result ?? { ok: false, refused: 'the update extension answered nothing' }
+    // A refusal is reported as it came, and the rest of the run does not happen — except for the clone that
+    // has diverged, which is clean and committed: the restart loads what is already on disk (see
+    // `afterRefusal`).
+    if (!pull.ok && afterRefusal(pull.refused) === 'stop')
+      return { pull, projects: [], restartSelf: false }
+  }
+  // After the pull this host's own view is fresh (the update refreshes it); `candidatesOf` asks every other
+  // host to look again, so none of them answers with what it knew before the clone moved.
+  const hosts = await candidatesOf(ctx, own)
+  const now = Date.now()
+  const path = restartsFile(userHome())
+  let plan: Planned[] = []
+  await serialised(ctx, path, async () => {
+    const attempts = await readRestarts()
+    plan = restartPlan(hosts, attempts, now)
+    // Stamped before the first restart: a process that dies in the middle of them does not loop either.
+    await writeHint(
+      path,
+      stampsAfter(
+        attempts,
+        plan.filter((target) => target.held === undefined).map((target) => target.key),
+        now,
+      ),
+    )
+  })
+  const projects: RestartOutcome[] = []
+  let restartSelf = false
+  for (const target of plan) {
+    // Held first, this window's own host included: the anti-loop is about the pair home+build, not about who
+    // restarts it, so a swap that was rolled back is not asked for again inside the window.
+    if (target.held !== undefined) {
+      projects.push({
+        name: target.name,
+        result: 'held',
+        reason: `tried ${ago(target.held, now)}`,
+      })
+      continue
+    }
+    if (target.self) {
+      restartSelf = true
+      projects.push({ name: target.name, result: 'self' })
+      continue
+    }
+    if (!target.origin) continue
+    projects.push(await restartHost({ name: target.name, origin: target.origin }, own))
+  }
+  return { ...(pull ? { pull } : {}), projects, restartSelf }
+}
+
+/** Fastest a second run of the night may follow one that could not even take its turn. */
+const NIGHTLY_FLOOR = 60_000
+
+/**
+ * The night of one install: its one timer. The `running` flag lives in a `host.resource`, so a reload cannot
+ * put two runs of the night side by side — the resource survives the reload that the timer does not.
+ */
+interface NightlyState {
+  timer?: NodeJS.Timeout
+  /** When this process last tried a run: what keeps a failure from looping through the timer. */
+  attemptedAt?: number
+}
+
+/** The record of one night, read now: a missing file is no record, and so is one that cannot be read. */
+async function readNightly(day: string): Promise<NightlyRecord | undefined> {
+  const text = await readFile(nightlyFile(userHome(), day), 'utf8').catch(() => '')
+  if (!text.trim()) return undefined
+  try {
+    return nightRecord(JSON.parse(text))
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The last night this machine recorded: today's, or — after midnight and before the hour — the one before
+ * it, which is what the morning reads until the next night replaces it.
+ */
+async function latestNightly(): Promise<NightlyRecord | undefined> {
+  const today = await readNightly(localDay(new Date()))
+  if (today) return today
+  const names = await readdir(join(userHome(), '.ultimate')).catch(() => [] as string[])
+  for (const day of nightlyDays(names)) {
+    const record = await readNightly(day)
+    if (record) return record
+  }
+  return undefined
+}
+
+/**
+ * The records of the nights before this one leave: one file of the election and of the record stays in this
+ * machine's `~/.ultimate/`, the newest. Only the night's own winner does this, and only files that are
+ * nightly records are ever removed.
+ */
+async function dropPastNights(day: string) {
+  const directory = join(userHome(), '.ultimate')
+  const names = await readdir(directory).catch(() => [] as string[])
+  for (const name of names) {
+    const other = nightlyDays([name])[0]
+    if (other !== undefined && other < day) await rm(join(directory, name), { force: true })
+  }
+}
+
+/**
+ * Is the machine idle? Every host of it that is up is asked what only it knows — `state`, in parallel, the
+ * same question the rail's wave asks — and the night steps aside for any that reports a conversation
+ * working. A host that does not answer is not working (and is not restarted either), so it does not block
+ * the night: its silence is not a reason to skip.
+ */
+async function workingElsewhere(ctx: Context, signal: AbortSignal): Promise<string[]> {
+  const rows = uniqueByRoot((await ctx.host.projects()).filter((project) => project.root))
+  const answers = await Promise.all(
+    rows.map(async (row): Promise<{ name: string; working: number | null }> => {
+      if (row.current) return { name: row.name, working: workingNow(ctx) }
+      // The lock is third-party input: an address that does not pass `hostOrigin` is nowhere to ask.
+      const origin = row.running ? hostOrigin(row.running.url) : undefined
+      if (!origin) return { name: row.name, working: null }
+      const answer = await ask(origin, signal).catch(() => undefined)
+      return { name: row.name, working: answer?.working ?? null }
+    }),
+  )
+  return workingNames(answers)
+}
+
+/**
+ * Arms the one timer of the night — from the settings as they are **now**, never from a copy in memory —
+ * and returns: the wait is a `setTimeout` for the next occurrence of the hour, or for the one retry a busy
+ * night has left, or nothing at all when `projects.update.at` is absent.
+ *
+ * The three cases the task has to get right are all in `nightPlan` and `retryPlan`: the hour still ahead,
+ * the hour that passed with no run that day (**the machine slept, or its window was closed: it runs now**),
+ * and the day that already had its run (tomorrow's hour, never a second run).
+ */
+async function armNightly(ctx: Context, state: NightlyState): Promise<void> {
+  if (state.timer) clearTimeout(state.timer)
+  state.timer = undefined
+  const settings = await readSettings()
+  const nightly = nightlyAt(settings.settings)
+  if (nightly.problem) {
+    // A value nobody can read is not guessed into midnight: the night is off, and the notice names the value.
+    ctx.host.notice(`Nightly update is off — ${nightly.problem}`)
+    return
+  }
+  const at = nightly.at
+  if (at === undefined) return
+  const now = new Date()
+  const record = await readNightly(localDay(now))
+  const retry = retryPlan(record, ctx.host.home, now.getTime())
+  const next = (delayMs: number, why: 'due' | 'retry') => {
+    state.timer = setTimeout(() => {
+      runNightly(ctx, state, why).catch((error: unknown) =>
+        ctx.host.notice(`Nightly update: ${reason(error)}`),
+      )
+    }, delayMs)
+    // A timer that keeps the process alive is not the point: the host serves, the night waits.
+    state.timer.unref()
+  }
+  if (retry.kind === 'run') return runNightly(ctx, state, 'retry')
+  if (retry.kind === 'wait') return next(retry.delayMs, 'retry')
+  const plan = nightPlan(now, at, record?.day)
+  if (plan.kind === 'run') {
+    // A run that could not even take its turn (a home it cannot write, a disk that is full) leaves no record,
+    // and "run now" would come straight back: one minute between attempts, never a hot loop.
+    const since = state.attemptedAt === undefined ? Infinity : now.getTime() - state.attemptedAt
+    if (since < NIGHTLY_FLOOR) return next(NIGHTLY_FLOOR - since, 'due')
+    return runNightly(ctx, state, 'due')
+  }
+  next(plan.delayMs, 'due')
+}
+
+/**
+ * One run of the night: the turn, the idle check, the very flow of the update button, the record and the
+ * line of the morning.
+ *
+ * The turn is taken by **creating** that day's record with `O_EXCL` (`wx`): exactly one host of the machine
+ * can create it, so seven windows arming the same hour produce one run, and the others write nothing and do
+ * nothing. The retry after a busy machine is not a second election — only the host that took the turn tries
+ * again, and only once.
+ *
+ * Nothing happens on a machine where a conversation is working: the record says `skipped`, one retry follows
+ * 45 minutes later (or the next night, if this was the retry). There is no `userActions` guard here: the
+ * night is the process's own work, not a click.
+ */
+async function runNightly(
+  ctx: Context,
+  state: NightlyState,
+  why: 'due' | 'retry',
+): Promise<void> {
+  const busy = ctx.host.resource('projects.nightly', () => ({ running: false }))
+  if (busy.running) return
+  busy.running = true
+  state.attemptedAt = Date.now()
+  try {
+    // Read now: the key may have been taken out since the timer was armed, and then there is no night.
+    const settings = await readSettings()
+    const at = nightlyAt(settings.settings).at
+    if (at === undefined) return
+    const now = new Date()
+    const day = localDay(now)
+    const path = nightlyFile(userHome(), day)
+    let record: NightlyRecord
+    if (why === 'due') {
+      const claim: NightlyRecord = {
+        day,
+        at: clock(at),
+        by: ctx.host.home,
+        claimedAt: now.toISOString(),
+        attempts: 1,
+      }
+      try {
+        // **O_EXCL**: the creation is the election, and it is not made through a temporary.
+        await writeFile(path, JSON.stringify(claim, null, 2) + '\n', { flag: 'wx', mode: 0o600 })
+      } catch (error) {
+        // Another host of the machine took tonight's turn: this one writes nothing at all.
+        if (!tookTurn(error)) return
+        throw error
+      }
+      await dropPastNights(day)
+      record = claim
+    } else {
+      const existing = await readNightly(day)
+      // The retry belongs to the host that took the turn, and to today's record only.
+      if (!existing || existing.by !== ctx.host.home) return
+      const { retryAt: _retry, ...rest } = existing
+      record = { ...rest, attempts: 2 }
+      await writeJsonAtomic(path, record)
+    }
+    const working = await workingElsewhere(ctx, new AbortController().signal)
+    if (working.length) {
+      const retry = (record.attempts ?? 1) < 2
+      const result = nightReport({ kind: 'busy', working, retry }, new Date().toISOString())
+      await writeJsonAtomic(path, {
+        ...record,
+        result,
+        ...(retry ? { retryAt: new Date(Date.now() + NIGHTLY_RETRY).toISOString() } : {}),
+      })
+      if (result.line) ctx.host.notice(result.line)
+      return
+    }
+    let report: UpdateReport | undefined
+    let trouble: string | undefined
+    try {
+      report = await updateAndRestart(ctx)
+    } catch (error) {
+      trouble = reason(error)
+    }
+    const result = report
+      ? nightReport({ kind: 'ran', report }, new Date().toISOString())
+      : nightReport(
+          { kind: 'failed', reason: trouble ?? 'the update stopped without an answer' },
+          new Date().toISOString(),
+        )
+    let final: NightlyRecord = { ...record, result }
+    if (report?.restartSelf) {
+      // The record is written **before** the swap: the process that swaps may not come back to write it.
+      await writeJsonAtomic(path, final)
+      const refused = await ctx.host
+        .restart(async () => {})
+        .catch((error: unknown) => reason(error))
+      if (refused) {
+        const line = `${result.line ?? 'Nightly update'} · this host did not restart: ${refused}`
+        final = { ...final, result: { ...result, line, lines: [...(result.lines ?? []), line] } }
+      }
+    }
+    await writeJsonAtomic(path, final)
+    if (final.result?.line) ctx.host.notice(final.result.line)
+  } finally {
+    busy.running = false
+    // The next one — tomorrow's hour, or the retry this night has left — is armed whatever came of this run.
+    await armNightly(ctx, state).catch((error: unknown) =>
+      ctx.host.notice(`Nightly update: ${reason(error)}`),
+    )
+  }
+}
+
 export const actions = {
   /**
    * This machine's projects, with the state and the command, **in the order the rail draws them**: this
@@ -1110,6 +1516,9 @@ export const actions = {
     // without a request: it is what the button at the foot of the rail counts, so the cheap read carries it
     // too. Absent when that extension is not enabled here.
     const clone = await cloneState(ctx)
+    // The last night of the automatic update, read from its record: one line the morning reads, and nothing
+    // at all when the night had nothing to say or the reader put it away.
+    const nightly = nightlyView(await latestNightly())
     const projects = withoutHidden(
       uniqueByRoot((await ctx.host.projects()).filter((project) => project.root)),
       hiddenHomes(settings.settings),
@@ -1126,6 +1535,7 @@ export const actions = {
         at,
         splash,
         ...(clone ? { clone } : {}),
+        ...(nightly ? { nightly } : {}),
       }
     const here: Measurements = {
       working: workingNow(ctx),
@@ -1164,7 +1574,13 @@ export const actions = {
         }
       }),
     )
-    return { projects: ordered(lines), at, splash, ...(clone ? { clone } : {}) }
+    return {
+      projects: ordered(lines),
+      at,
+      splash,
+      ...(clone ? { clone } : {}),
+      ...(nightly ? { nightly } : {}),
+    }
   },
 
   /**
@@ -1278,6 +1694,21 @@ export const actions = {
   },
 
   /**
+   * The line of the night was read and put away: the record of that night keeps the time, and the rail stops
+   * drawing the item — one line, once. Not a user action: putting away a note is not a change to the machine,
+   * and the record is only written again by it.
+   */
+  async seen(_args: JsonValue, _ctx: Context): Promise<Seen> {
+    const record = await latestNightly()
+    if (record)
+      await writeJsonAtomic(nightlyFile(userHome(), record.day), {
+        ...record,
+        seenAt: new Date().toISOString(),
+      })
+    return { seen: true }
+  },
+
+  /**
    * The button at the foot of the rail — **update and restart the machine** — and only a person's click. In
    * this order:
    *
@@ -1301,66 +1732,7 @@ export const actions = {
    * leave half the machine restarted.
    */
   async update(_args: JsonValue, ctx: Context): Promise<UpdateReport> {
-    // Nothing is aborted from outside: the click was made, and the machine's restarts are not the page's.
-    const own = new AbortController().signal
-    const update = ctx.host.want<UpdateService>(Update)
-    // Look at the clone before deciding: a fetch that is due may reveal commits, and this click should bring
-    // them in rather than leave them for the next one.
-    if (update) await ctx.host.invoke('update', 'check', {}, own).catch(() => undefined)
-    const clone = await cloneState(ctx)
-    let pull: PullResult | undefined
-    if (pullOwed(clone)) {
-      if (!update)
-        throw new Error('The update extension is not enabled in this window, so the clone cannot be updated')
-      const result = (await ctx.host.invoke('update', 'update', {}, own)) as PullResult | undefined
-      pull = result ?? { ok: false, refused: 'the update extension answered nothing' }
-      // A refusal is reported as it came, and the rest of the click does not happen — except for the clone that
-      // has diverged, which is clean and committed: the restart loads what is already on disk, and it is the one
-      // thing the machine needs from this click (see `afterRefusal`).
-      if (!pull.ok && afterRefusal(pull.refused) === 'stop')
-        return { pull, projects: [], restartSelf: false }
-    }
-    // After the pull this host's own view is fresh (the update refreshes it); `candidatesOf` asks every other
-    // host to look again, so none of them answers with what it knew before the clone moved.
-    const hosts = await candidatesOf(ctx, own)
-    const now = Date.now()
-    const path = restartsFile(userHome())
-    let plan: Planned[] = []
-    await serialised(ctx, path, async () => {
-      const attempts = await readRestarts()
-      plan = restartPlan(hosts, attempts, now)
-      // Stamped before the first restart: a process that dies in the middle of them does not loop either.
-      await writeHint(
-        path,
-        stampsAfter(
-          attempts,
-          plan.filter((target) => target.held === undefined).map((target) => target.key),
-          now,
-        ),
-      )
-    })
-    const projects: RestartOutcome[] = []
-    let restartSelf = false
-    for (const target of plan) {
-      // Held first, this window's own host included: the anti-loop is about the pair home+build, not about who
-      // restarts it, so a swap that was rolled back is not asked for again inside the window.
-      if (target.held !== undefined) {
-        projects.push({
-          name: target.name,
-          result: 'held',
-          reason: `tried ${ago(target.held, now)}`,
-        })
-        continue
-      }
-      if (target.self) {
-        restartSelf = true
-        projects.push({ name: target.name, result: 'self' })
-        continue
-      }
-      if (!target.origin) continue
-      projects.push(await restartHost({ name: target.name, origin: target.origin }, own))
-    }
-    return { ...(pull ? { pull } : {}), projects, restartSelf }
+    return updateAndRestart(ctx)
   },
 
   /**

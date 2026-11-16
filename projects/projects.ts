@@ -20,10 +20,14 @@ import { basename, isAbsolute, join, resolve } from 'node:path'
 import type {
   Clone,
   Measurement,
+  NightlyRecord,
+  NightlyResult,
+  NightlyView,
   Project,
   PullResult,
   RestartOutcome,
   Section,
+  UpdateReport,
 } from './types.ts'
 
 /**
@@ -913,4 +917,305 @@ export function outcomeLine(outcome: RestartOutcome): string {
   if (outcome.result === 'held') return `${outcome.name} — held, ${outcome.reason ?? 'tried recently'}`
   if (outcome.result === 'self') return `${outcome.name} — this window restarts itself`
   return `${outcome.name} — ${outcome.reason ?? 'did not come back'}`
+}
+
+/* ------------------------------------------------------------------------------------------------
+ * The nightly update — `projects.update.at` in this machine's settings
+ *
+ * One host of the machine, once a night, at the local hour the settings name, pulls the shared clone and
+ * restarts the hosts that run old code — but only when **no conversation of the machine is working**.
+ * Everything that decides anything is here, as a function of the settings, the clock and the record; the
+ * server only reads the disk, asks the hosts and runs the same flow as the button.
+ *
+ * The record is one file of this machine's `~/.ultimate/`, named by the local day
+ * (`projects-update-<YYYY-MM-DD>.json`). Its **creation** is the election: `O_EXCL` succeeds for exactly
+ * one host, so seven windows arming the same timer still produce one run. The winner rewrites it through a
+ * temporary and a `rename` with what came of the night, and that record is what the rail shows in the
+ * morning. A day's file that cannot be read is read as no record at all — never repaired, never rewritten.
+ * ------------------------------------------------------------------------------------------------ */
+
+/** The file of one night, in this machine's `~/.ultimate/`: `projects-update-<day>.json`. */
+export const NIGHTLY_PREFIX = 'projects-update-'
+
+/** How late the one retry after a busy machine comes: long enough for a turn to end, short enough to be
+ * the same night. After it, only the next night runs. */
+export const NIGHTLY_RETRY = 45 * 60_000
+
+/** `YYYY-MM-DD`, the local day the machine writes down. */
+const DAY = /^\d{4}-\d{2}-\d{2}$/
+
+/** A local time of day, `HH:MM`, on the 24-hour clock and with two digits on each side. */
+const CLOCK = /^([01]\d|2[0-3]):([0-5]\d)$/
+
+/** Minutes after midnight, when `text` is `HH:MM`; `undefined` for anything else. */
+export function minutesOf(text: string): number | undefined {
+  const parsed = CLOCK.exec(text)
+  if (!parsed) return undefined
+  return Number(parsed[1]) * 60 + Number(parsed[2])
+}
+
+/** The other way round, as the record and the panel write it: `180` → `03:00`. */
+export function clock(minutes: number): string {
+  const hours = Math.floor(minutes / 60)
+  return `${String(hours).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`
+}
+
+/** The local day of a moment, `YYYY-MM-DD` — the machine's day, not UTC's: at 23:30 in São Paulo it is
+ * still today there, whatever the UTC date says. */
+export function localDay(date: Date): string {
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${date.getFullYear()}-${month}-${day}`
+}
+
+/**
+ * What this machine's settings say about the nightly update: `projects.update.at` in
+ * `<user home>/.ultimate/settings.json`, the same file `projects.hidden` lives in. Absent (or absent `at`)
+ * is **off**, which is the factory state. A value that is not `HH:MM` is not guessed into midnight: it is
+ * ignored, with the reason the caller says out loud.
+ */
+export function nightlyAt(settings: unknown): { at?: number; problem?: string } {
+  if (!isObject(settings)) return {}
+  const projects = settings.projects
+  if (!isObject(projects)) return {}
+  const update = projects.update
+  if (update === undefined) return {}
+  if (!isObject(update))
+    return { problem: 'projects.update must be an object such as { "at": "03:00" }' }
+  const at = update.at
+  if (at === undefined) return {}
+  const minutes = typeof at === 'string' ? minutesOf(at) : undefined
+  if (minutes === undefined)
+    return {
+      problem: `projects.update.at must be a local time "HH:MM" such as "03:00", not ${JSON.stringify(at)}`,
+    }
+  return { at: minutes }
+}
+
+/** What the timer is to do next, from the clock and the day the machine already ran. */
+export type NightPlan = { kind: 'wait'; delayMs: number } | { kind: 'run' }
+
+/** The hour `at` of the day `days` after `now`, in local time (the calendar's, so a DST change does not
+ * shift the hour of the wall). */
+function occurrence(now: Date, at: number, days: number): Date {
+  return new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() + days,
+    Math.floor(at / 60),
+    at % 60,
+    0,
+    0,
+  )
+}
+
+/**
+ * When the next run is: **one** decision, no poll. A day whose hour has come and that the machine has not
+ * run yet runs **now** — that is the machine that was asleep at 03:00, or whose window was closed, and it
+ * catches up the first time it is up again. A day that already ran waits for tomorrow's hour, even if the
+ * hour was moved earlier meanwhile. `ranDay` is the day of the record of today (or nothing at all).
+ */
+export function nightPlan(now: Date, at: number, ranDay: string | undefined): NightPlan {
+  const today = localDay(now)
+  const due = occurrence(now, at, 0)
+  if (ranDay !== today && now.getTime() >= due.getTime()) return { kind: 'run' }
+  const next = ranDay === today ? occurrence(now, at, 1) : due
+  return { kind: 'wait', delayMs: Math.max(1000, next.getTime() - now.getTime()) }
+}
+
+/** The record of that night, in this machine's `~/.ultimate/`. */
+export function nightlyFile(userHome: string, day: string): string {
+  return join(userHome, '.ultimate', `${NIGHTLY_PREFIX}${day}.json`)
+}
+
+/** The days among a directory's entries that are nightly records, newest first. The name carries the day,
+ * so the newest is the first: nothing else of the file has to be read to know which night is the last. */
+export function nightlyDays(names: readonly string[]): string[] {
+  return names
+    .filter((name) => name.startsWith(NIGHTLY_PREFIX) && name.endsWith('.json'))
+    .map((name) => name.slice(NIGHTLY_PREFIX.length, -'.json'.length))
+    .filter((day) => DAY.test(day))
+    .sort()
+    .reverse()
+}
+
+/**
+ * Did this host take the night's turn? `claim` is the **exclusive** creation of that day's file, and its
+ * one answer that means "another host took it" is `EEXIST`: whoever created the file is the winner, and
+ * everyone else does nothing — the whole point of the election. Anything else is a real failure and goes on
+ * to the caller.
+ */
+export function tookTurn(claim: unknown): boolean {
+  if (claim === undefined || claim === null) return true
+  if ((claim as { code?: unknown }).code === 'EEXIST') return false
+  throw claim
+}
+
+/**
+ * The record of a night, when it is one: the day, the hour, the home that took the turn and when. A file
+ * that is not that is **no record at all** — never repaired, never half-read — and a crooked `result` is
+ * dropped while the turn it names is kept.
+ */
+export function nightRecord(value: unknown): NightlyRecord | undefined {
+  if (!isObject(value)) return undefined
+  const { day, at, by, claimedAt } = value
+  if (typeof day !== 'string' || !DAY.test(day)) return undefined
+  if (typeof at !== 'string' || minutesOf(at) === undefined) return undefined
+  if (typeof by !== 'string' || !by) return undefined
+  if (typeof claimedAt !== 'string') return undefined
+  const record: NightlyRecord = { day, at, by, claimedAt }
+  const result = nightResult(value.result)
+  if (result) record.result = result
+  if (typeof value.retryAt === 'string' && Number.isFinite(Date.parse(value.retryAt)))
+    record.retryAt = value.retryAt
+  if (typeof value.attempts === 'number' && Number.isInteger(value.attempts) && value.attempts > 0)
+    record.attempts = value.attempts
+  if (typeof value.seenAt === 'string') record.seenAt = value.seenAt
+  return record
+}
+
+function nightResult(value: unknown): NightlyResult | undefined {
+  if (!isObject(value)) return undefined
+  const outcome = value.outcome
+  if (outcome !== 'ran' && outcome !== 'busy' && outcome !== 'failed') return undefined
+  if (typeof value.at !== 'string') return undefined
+  const result: NightlyResult = { outcome, at: value.at }
+  if (typeof value.line === 'string' && value.line) result.line = value.line
+  if (Array.isArray(value.lines) && value.lines.every((line) => typeof line === 'string'))
+    result.lines = value.lines as string[]
+  if (value.supervisor === true) result.supervisor = true
+  return result
+}
+
+/** What the run found, in the words of the record: what the flow reported, the working projects that made
+ * it step aside, or why it could not do the work. */
+export type NightlyInput =
+  | { kind: 'ran'; report: UpdateReport }
+  | { kind: 'busy'; working: readonly string[]; retry: boolean }
+  | { kind: 'failed'; reason: string }
+
+/**
+ * The night written down: **one line** for the morning and the detail behind it. The line names what
+ * moved (`120 commits, 3b2f1a → 9c1d2e`), what restarted and in how long, what failed, what it stepped
+ * aside for — and, when the pull touched `bin/`, that the supervisor keeps running the old one until a
+ * person stops and starts the host: a restart swaps the core, never the supervisor.
+ *
+ * A night with nothing to do has no line at all: the rail then shows no item, which is the quiet the
+ * morning deserves.
+ */
+export function nightReport(input: NightlyInput, at: string): NightlyResult {
+  if (input.kind === 'failed') {
+    const line = `Nightly update failed: ${input.reason}`
+    return { outcome: 'failed', at, line, lines: [line] }
+  }
+  if (input.kind === 'busy') {
+    const count = input.working.length
+    const names = input.working.slice(0, 3).join(', ')
+    const when = input.retry
+      ? `trying again in ${Math.round(NIGHTLY_RETRY / 60_000)} min`
+      : 'the next run is tomorrow'
+    const line = `Nightly update skipped: ${count} ${count === 1 ? 'project was' : 'projects were'} working (${names}) — ${when}`
+    return { outcome: 'busy', at, line, lines: [line] }
+  }
+  const { report } = input
+  const pull = report.pull
+  const wentOn = pull !== undefined && !pull.ok && afterRefusal(pull.refused) === 'restart'
+  const supervisor = pull?.ok === true && pull.layers?.bin === true
+  const restarted = report.projects.filter(
+    (outcome) => outcome.result === 'restarted' || outcome.result === 'self',
+  )
+  const failed = report.projects.filter((outcome) => outcome.result === 'failed')
+  const held = report.projects.filter((outcome) => outcome.result === 'held')
+  const seconds = restarted.reduce((total, outcome) => total + (outcome.seconds ?? 0), 0)
+  const parts: string[] = []
+  const lines: string[] = []
+  if (pull?.ok) {
+    const commits = `${pull.commits} ${pull.commits === 1 ? 'commit' : 'commits'}, ${shortSha(pull.from)} → ${shortSha(pull.to)}`
+    parts.push(commits)
+    if (pull.install === 'done') parts.push('packages installed')
+    if (pull.install === 'failed') parts.push('install failed')
+    lines.push(pullLine(pull))
+  } else if (pull) {
+    parts.push(
+      `pull refused: ${pull.refused}${wentOn ? ' — restarted what is already here' : ' — nothing restarted'}`,
+    )
+    lines.push(pullLine(pull, wentOn))
+  }
+  if (restarted.length)
+    parts.push(
+      `restarted ${restarted.length} ${restarted.length === 1 ? 'project' : 'projects'}${seconds ? ` in ${seconds}s` : ''}`,
+    )
+  if (failed.length) parts.push(`${failed.length} failed (${failed.map((outcome) => outcome.name).join(', ')})`)
+  if (held.length) parts.push(`${held.length} held back`)
+  if (supervisor) parts.push('bin/ changed: stop and start the host to load the new supervisor')
+  for (const outcome of report.projects) lines.push(outcomeLine(outcome))
+  const line = parts.length ? `Nightly update: ${parts.join(' · ')}` : undefined
+  const installFailed = pull?.ok === true && pull.install === 'failed'
+  const wrong = (pull !== undefined && !pull.ok) || failed.length > 0 || installFailed
+  return {
+    outcome: wrong ? 'failed' : 'ran',
+    at,
+    ...(line ? { line } : {}),
+    ...(lines.length ? { lines } : {}),
+    ...(supervisor ? { supervisor: true } : {}),
+  }
+}
+
+/** A commit as the one line says it: seven characters, the way git prints it in a log. */
+function shortSha(sha: string): string {
+  return sha.slice(0, 7)
+}
+
+/**
+ * The report as the rail draws it, or nothing: nothing when the machine did not run, when the night had
+ * nothing to say, and when the reader already put it away (`seenAt`).
+ */
+export function nightlyView(record: NightlyRecord | undefined): NightlyView | undefined {
+  if (!record || record.seenAt) return undefined
+  const result = record.result
+  if (!result?.line) return undefined
+  return {
+    day: record.day,
+    at: record.at,
+    outcome: result.outcome,
+    line: result.line,
+    lines: result.lines ?? [],
+    ...(result.supervisor ? { supervisor: true } : {}),
+  }
+}
+
+/** When the one retry after a busy machine is due, for the host that took the turn. */
+export type Retry = { kind: 'none' } | { kind: 'wait'; delayMs: number } | { kind: 'run' }
+
+/**
+ * The retry after a busy machine, read from the record: only **the host that took the turn** tries again
+ * (there is exactly one such host, so no second election is needed), only once (`attempts`), and only when
+ * there was something to step aside for. A retry that came due while the host was restarting runs at once —
+ * the same catch-up as the night's own.
+ */
+export function retryPlan(
+  record: NightlyRecord | undefined,
+  by: string,
+  now: number,
+): Retry {
+  if (!record || record.by !== by) return { kind: 'none' }
+  if (record.result?.outcome !== 'busy') return { kind: 'none' }
+  if ((record.attempts ?? 1) >= 2) return { kind: 'none' }
+  if (!record.retryAt) return { kind: 'none' }
+  const due = Date.parse(record.retryAt)
+  if (!Number.isFinite(due)) return { kind: 'none' }
+  return now >= due ? { kind: 'run' } : { kind: 'wait', delayMs: Math.max(1000, due - now) }
+}
+
+/**
+ * The projects that keep the machine from being idle: those that answered that a conversation of theirs is
+ * working. A host that did not answer (`null`) is **not** counted — its silence is not a reason to skip a
+ * night, and it is not restarted either; an invented zero is not one.
+ */
+export function workingNames(
+  answers: readonly { name: string; working: number | null }[],
+): string[] {
+  return answers
+    .filter((answer) => (measured(answer.working) ?? 0) > 0)
+    .map((answer) => answer.name)
 }

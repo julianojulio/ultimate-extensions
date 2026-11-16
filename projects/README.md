@@ -4,7 +4,8 @@ A column on the left edge of the window, one tile per project: running hosts on 
 below, each with a presence dot and the number of unanswered questions. One click opens a project or
 brings it up. When the clone Ultimate runs from has moved — or a host of this machine is still running
 the code from before it did — a button at the foot of the rail updates the clone once and restarts every
-host that needs it.
+host that needs it, and the same thing can happen by itself once a night, when no conversation is
+working.
 
 ![The rail on the left edge](screenshots/rail.png)
 
@@ -108,12 +109,16 @@ What to keep in mind:
 - **Nothing is pushed.** The button fetches, fast-forwards and restarts; it never touches your branches,
   never resolves a conflict and never resets anything.
 
+The same flow can run by itself, once a night, on a machine that is not working: see
+[the nightly update](#the-nightly-update).
+
 ## Configuration
 
-Two keys of this machine's `~/.ultimate/settings.json` are this extension's: the splash switch and the
-homes the rail hides. Everything else in the file stays as it is. A second file,
-`~/.ultimate/projects-shown.json`, holds the order of the tiles; it is this extension's own, and the
-settings file never mentions it.
+Three keys of this machine's `~/.ultimate/settings.json` are this extension's: the splash switch, the
+homes the rail hides, and the nightly update. Everything else in the file stays as it is. Two other files
+of its own, `~/.ultimate/projects-shown.json` and `~/.ultimate/projects-restarts.json`, hold the order of
+the tiles and the restarts that were tried; a third, `~/.ultimate/projects-update-<day>.json`, is the
+night.
 
 ### The order of the tiles
 
@@ -187,6 +192,72 @@ entries older than ten minutes are dropped on every click, and a file that canno
 no attempt at all. Deleting it is safe: it only means the next click may retry a host it would have left
 alone.
 
+### The nightly update
+
+Once a night, on a machine that is not working, the button can run by itself. One key turns it on:
+
+```json
+{ "projects": { "update": { "at": "03:00" } } }
+```
+
+`at` is a local time, `HH:MM` (`03:00`, `22:30`). **Absent is off**, which is the factory state. A value that
+is not a time (`"3:00"`, `"24:00"`, a number) is ignored and said in a notice that names it — guessing
+midnight would update the machine at an hour nobody asked for. The key is read when the night is armed, so
+writing it (or taking it out) applies at once: the extension is reinstalled on a live settings change.
+
+**Idle** means no conversation is working, in any project of this machine. Before touching anything, the
+host that took the night asks every host that is up — `state`, in parallel, the same question the rail's
+dots answer — and one working conversation is enough to step aside. It records `skipped: 1 project was
+working (api)` and tries **once** again 45 minutes later; after that, only the next night. A host that does
+not answer is not counted as working, and is not restarted either.
+
+The night does exactly what a click of the button does: the clone once through Ultimate's own update, then
+every host that runs old code restarted one at a time, this one last (it swaps itself through its own
+supervisor). The refusals are the button's, too — a dirty clone, another branch or a landing stops the
+night; a diverged clone only skips the update. **`bin/` is the exception a restart cannot fix**: a pull that
+touched the supervisor cannot be applied by a swap, so the line says `bin/ changed: stop and start the host
+to load the new supervisor` and the machine keeps running the old one until you stop that host and start it
+again.
+
+If the machine is asleep at `at`, or no window is open, the night comes the next time a host is up: a day
+that has no run yet and whose hour has passed runs **at once** (that is the catch-up). It never runs twice
+in the same local day — the turn is a file only one host of the machine can create.
+
+In the morning the rail has one quiet line at its foot, a moon between the tiles and `⟳`: what moved
+(`120 commits, 3b2f1a0 → 9c1d2e4`), what restarted and in how long, what failed, what it stepped aside for.
+Hovering or clicking it opens the detail; the ✕ puts it away for the day. One item, never one per project,
+and nothing at all after a night with nothing to do.
+
+### The record of the night
+
+One file of its own, named by the local day, is both the election and the record:
+`~/.ultimate/projects-update-2026-05-12.json`.
+
+```json
+{
+  "day": "2026-05-12",
+  "at": "03:00",
+  "by": "/home/juliano/.ultimate/projects/billing-app-1a2b3c4d",
+  "claimedAt": "2026-05-12T06:00:00.012Z",
+  "attempts": 1,
+  "result": {
+    "outcome": "ran",
+    "at": "2026-05-12T06:00:02.640Z",
+    "line": "Nightly update: 120 commits, 3b2f1a0 → 9c1d2e4 · restarted 2 projects in 4s",
+    "lines": ["updated 120 commits (3b2f1a0 → 9c1d2e4)", "api — restarted in 2s"]
+  }
+}
+```
+
+The file's **creation** is the election: it is created exclusively (`O_EXCL`), so exactly one host of the
+machine takes the turn for a day, and every other host finds it there and does nothing at all — seven
+windows arming the same hour produce one run. The winner rewrites it through a temporary and a `rename`
+with what came of the night (`result`), the retry it owes (`retryAt`, only after a busy machine and only
+once), and whether its line was read (`seenAt`). A file that cannot be read is no record at all: nothing is
+repaired or rewritten, and that day does not run again — the file is what says the turn was taken. The
+next night drops the older ones, so one file stays. Deleting it is safe: the next start takes the turn
+again and that day's night runs.
+
 ## Actions
 
 For agents and automation, one line each:
@@ -198,6 +269,7 @@ For agents and automation, one line each:
 - `measure` — `{ name }`: that project measured now, with the time of the answer.
 - `state` — this host only: working conversations and open questions, its build and generation, and whether
   the clone has moved past it; another host asks it.
+- `seen` — no arguments: the line of the last night was read, so the rail stops drawing it.
 - `update` — no arguments: updates the clone once through Ultimate's update and restarts, one at a time,
   every host of the machine that answered that the clone has moved past it. Returns the pull and one result
   per host; `restartSelf: true` when this window's own host is among them (the window asks the SDK to swap).
@@ -226,4 +298,11 @@ restarts every window of the machine — behind the screen.
 - It does not run `git` or `pnpm` itself, and it never pushes: the update button asks Ultimate's update,
   which refuses a dirty, switched or diverged clone instead of resolving it.
 - It does not restart the window that clicked it directly: that window asks the core to swap itself.
+- It does not restart the supervisor: when the nightly update's pull touches `bin/`, the line of the morning
+  says so and waits for you to stop that host and start it again.
+- It does not resolve a dirty or diverged clone, and it does not update while a conversation is working
+  anywhere on the machine: it steps aside, tries once more in 45 minutes, and then waits for the next
+  night.
+- It does not run the night twice in one day, and it does not run one at all while `projects.update.at` is
+  absent or cannot be read.
 - It does not reach another computer: only what runs on this one, on loopback.

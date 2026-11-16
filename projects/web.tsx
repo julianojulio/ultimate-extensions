@@ -45,12 +45,14 @@ import {
   CopyIcon,
   EyeOffIcon,
   LoaderCircleIcon,
+  MoonIcon,
   PlayIcon,
   PlusIcon,
   RotateCwIcon,
   SquareIcon,
   ToggleLeftIcon,
   ToggleRightIcon,
+  XIcon,
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, FormEvent, ReactNode } from 'react'
@@ -96,6 +98,7 @@ import {
 import type { Presence } from './projects.ts'
 import type {
   Measurement,
+  NightlyView,
   Project,
   CreateResult,
   ForgetResult,
@@ -138,6 +141,9 @@ const SplashAction = actionRef<{ enabled: boolean }, Splash>('projects', 'splash
  * moved past. A user-only action: this is a click, never an agent's call.
  */
 const UpdateAllAction = actionRef<Record<string, never>, UpdateReport>('projects', 'update')
+
+/** `{}` → the line of the last night was read: it is not drawn again. */
+const SeenAction = actionRef<Record<string, never>, { seen: true }>('projects', 'seen')
 
 /** How often the local reading of this window's own project is refreshed, so its dot keeps moving while
  * it works (the numbers come from this host, not from a request). */
@@ -335,6 +341,9 @@ function Column() {
         )}
       </div>
       <div className="flex shrink-0 flex-col items-center gap-1 pt-1">
+        {/* The last night, when it has something to say: one item, dismissed with a click, and gone from the
+            rail until the next night writes another. */}
+        {shown?.nightly && <Nightly nightly={shown.nightly} onChanged={refresh} />}
         <Icon
           className={cn('size-6', (loading || measuring) && 'pointer-events-none')}
           label={
@@ -374,6 +383,58 @@ function Column() {
 }
 
 /**
+ * A panel anchored to the right of a foot item, which is where the rail's 24px buttons are: it opens on the
+ * pointer reaching the button, closes when the pointer leaves both (with the usual moment of grace over the
+ * 8px between them), and closes on Escape and on any scroll, because it is anchored where it opened.
+ *
+ * Two items at the foot of the rail use it — the update button and the line of the last night — so the
+ * mechanics of "a panel beside a 24px button at the bottom of the window" are written once.
+ */
+function useFootPanel(onOpenChange?: (open: boolean) => void) {
+  const [open, setOpen] = useState(false)
+  const [anchor, setAnchor] = useState<CSSProperties>()
+  const frame = useRef<HTMLDivElement>(null)
+  const exit = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const show = (next: boolean) => {
+    setOpen(next)
+    onOpenChange?.(next)
+  }
+  const close = () => {
+    clearTimeout(exit.current)
+    show(false)
+  }
+  /** Beside the button and upwards: the foot of the rail is at the bottom of the window. */
+  const openPanel = () => {
+    const box = frame.current?.getBoundingClientRect()
+    if (box) setAnchor({ left: box.right + 8, bottom: Math.max(8, window.innerHeight - box.bottom) })
+    show(true)
+  }
+  /** Leaving the button and its panel closes it, with the moment of grace over the gap between them. */
+  const leave = () => {
+    clearTimeout(exit.current)
+    exit.current = setTimeout(close, 200)
+  }
+  /** Reaching the panel cancels that moment: it is 8px to the right of a 24px button, and its lines are to be
+   * read and selected, not passed over. */
+  const enter = () => clearTimeout(exit.current)
+  useEffect(() => () => clearTimeout(exit.current), [])
+  useEffect(() => {
+    if (!open) return undefined
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close()
+    }
+    const onScroll = () => close()
+    document.addEventListener('keydown', onKeyDown)
+    document.addEventListener('scroll', onScroll, { capture: true, passive: true })
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      document.removeEventListener('scroll', onScroll, { capture: true })
+    }
+  }, [open])
+  return { open, anchor, frame, openPanel, close, toggle: () => (open ? close() : openPanel()), enter, leave }
+}
+
+/**
  * The update button at the foot of the rail — **update and restart the machine** — present only when there is
  * something to do (its label comes from `updateTitle`). One click pulls the shared clone once and restarts,
  * one at a time, every host that runs code the clone has moved past. This window's own host is the exception:
@@ -384,6 +445,9 @@ function Column() {
  * it refused — a diverged clone is the one that refuses the pull and restarts anyway, and its line says so),
  * one line per host, and the window's own swap while it runs or why it was rolled back. A host that did not
  * come back is a line in red: it is never called ready.
+ *
+ * The same flow is what the nightly update runs when the machine is idle (see `projects.update.at` and
+ * `server.ts`): this button is the click, the night is the process.
  */
 function UpdateButton({
   label,
@@ -400,53 +464,8 @@ function UpdateButton({
   const [pending, setPending] = useState(false)
   const [report, setReport] = useState<UpdateReport>()
   const [error, setError] = useState<string>()
-  const [open, setOpen] = useState(false)
-  const [anchor, setAnchor] = useState<CSSProperties>()
-  const frame = useRef<HTMLDivElement>(null)
-  const exit = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const { open, anchor, frame, openPanel, enter, leave } = useFootPanel(onOpenChange)
   const restart = useRestart()
-  useEffect(() => () => clearTimeout(exit.current), [])
-
-  const show = (next: boolean) => {
-    setOpen(next)
-    onOpenChange(next)
-  }
-
-  const close = () => {
-    clearTimeout(exit.current)
-    show(false)
-  }
-
-  /** Beside the button and upwards: the foot of the rail is at the bottom of the window. */
-  const openPanel = () => {
-    const box = frame.current?.getBoundingClientRect()
-    if (box) setAnchor({ left: box.right + 8, bottom: Math.max(8, window.innerHeight - box.bottom) })
-    show(true)
-  }
-
-  /** Leaving the button and its panel closes it, with the usual moment of grace over the gap between them. */
-  const leave = () => {
-    clearTimeout(exit.current)
-    exit.current = setTimeout(close, 200)
-  }
-
-  /** Reaching the panel cancels that moment: it is 8px to the right of a 24px button, and its lines are to be
-   * read and selected, not passed over. */
-  const enter = () => clearTimeout(exit.current)
-
-  useEffect(() => {
-    if (!open) return undefined
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close()
-    }
-    const onScroll = () => close()
-    document.addEventListener('keydown', onKeyDown)
-    document.addEventListener('scroll', onScroll, { capture: true, passive: true })
-    return () => {
-      document.removeEventListener('keydown', onKeyDown)
-      document.removeEventListener('scroll', onScroll, { capture: true })
-    }
-  }, [open])
 
   const run = async () => {
     if (pending) return
@@ -533,6 +552,88 @@ function UpdateButton({
             {restart.error && (
               <p className="text-[10.5px] leading-relaxed break-words text-error">{restart.error}</p>
             )}
+            {error && <p className="text-[10.5px] leading-relaxed break-words text-error">{error}</p>}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * The line of the last night, at the foot of the rail — one item, and only when the night had something to
+ * say. The moon is quiet after a night that updated, amber after one that stepped aside for a working
+ * project, red after one that could not do the work; the panel beside it carries the detail and the one
+ * button that matters in the morning, which is `Dismiss`: read once, then out of the way.
+ *
+ * Everything drawn here came from `list` — the record of the night as this machine wrote it — so nothing is
+ * computed on screen: the words of the run are the ones composed when it ended.
+ */
+function Nightly({ nightly, onChanged }: { nightly: NightlyView; onChanged: () => Promise<unknown> }) {
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState<string>()
+  const { open, anchor, frame, toggle, close, enter, leave } = useFootPanel()
+  const dismiss = async () => {
+    if (pending) return
+    setError(undefined)
+    setPending(true)
+    try {
+      await api.action(SeenAction, {})
+      close()
+      await onChanged()
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setPending(false)
+    }
+  }
+  const tone =
+    nightly.outcome === 'failed'
+      ? 'text-error'
+      : nightly.outcome === 'busy'
+        ? 'text-warning'
+        : 'text-muted-foreground'
+  return (
+    <div className="relative flex" onPointerEnter={enter} onPointerLeave={leave} ref={frame}>
+      <Icon
+        className="size-6"
+        label={`Last night: ${nightly.line}`}
+        onClick={() => (open ? close() : toggle())}
+        title={nightly.line}
+      >
+        <MoonIcon className={cn('size-3.5', tone)} />
+      </Icon>
+      {open && anchor && (
+        <div
+          className="fixed z-50 w-64 rounded-md border bg-popover p-3 text-popover-foreground shadow-md before:absolute before:inset-y-0 before:-left-2 before:w-2 before:content-['']"
+          data-projects-nightly
+          style={anchor}
+        >
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-start justify-between gap-2">
+              <span className="text-[12.5px] text-foreground">Last night, {nightly.at}</span>
+              <button
+                aria-label="Dismiss the last night's report"
+                className="flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground/70 outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default"
+                disabled={pending}
+                onClick={() => void dismiss()}
+                title="Dismiss"
+                type="button"
+              >
+                {pending ? <LoaderCircleIcon className="size-3 animate-spin" /> : <XIcon className="size-3" />}
+              </button>
+            </div>
+            <p className={cn('text-[11px] leading-relaxed break-words', tone)}>{nightly.line}</p>
+            {nightly.lines
+              .filter((line) => line !== nightly.line)
+              .map((line) => (
+                <p
+                  className="font-mono text-[10.5px] leading-relaxed break-words text-muted-foreground"
+                  key={line}
+                >
+                  {line}
+                </p>
+              ))}
             {error && <p className="text-[10.5px] leading-relaxed break-words text-error">{error}</p>}
           </div>
         </div>

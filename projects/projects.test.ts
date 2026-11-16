@@ -98,6 +98,19 @@ import {
   RESTART_WINDOW,
   stampsAfter,
   updateTitle,
+  clock,
+  localDay,
+  minutesOf,
+  nightPlan,
+  nightRecord,
+  nightReport,
+  nightlyAt,
+  nightlyDays,
+  nightlyFile,
+  nightlyView,
+  retryPlan,
+  tookTurn,
+  workingNames,
 } from './projects.ts'
 import type { Candidate, Target } from './projects.ts'
 import type { Measurement, Project, PullResult, Section } from './types.ts'
@@ -1075,4 +1088,329 @@ test('how long ago a restart was tried, in the words of a line', () => {
   assert.equal(ago(now - 2 * 3_600_000, now), '2h ago')
   // A stamp from the future never reads as a negative time.
   assert.equal(ago(now + 5_000, now), 'just now')
+})
+
+/* ------------------------------------------------------------------------------------------------
+ * The nightly update: `projects.update.at` of this machine's settings, the hour, the election, the line
+ * the morning reads and the retry after a busy machine. Nothing here touches a disk or a clock: every
+ * case is a fixture.
+ * ------------------------------------------------------------------------------------------------ */
+
+test('the nightly update is off until the settings name an hour, and a crooked hour is not midnight', () => {
+  // Absent, an empty `projects`, or one without `update`: off. The factory state of every machine.
+  assert.deepEqual(nightlyAt({}), {})
+  assert.deepEqual(nightlyAt({ projects: { hidden: ['~/x'] } }), {})
+  assert.deepEqual(nightlyAt({ projects: { update: {} } }), {})
+  assert.deepEqual(nightlyAt(undefined), {})
+  // A local time, `HH:MM`, becomes minutes after midnight.
+  assert.deepEqual(nightlyAt({ projects: { update: { at: '03:00' } } }), { at: 180 })
+  assert.deepEqual(nightlyAt({ projects: { update: { at: '00:00' } } }), { at: 0 })
+  assert.deepEqual(nightlyAt({ projects: { update: { at: '23:59' } } }), { at: 1439 })
+  // What is not `HH:MM` is ignored with the reason said out loud — never "midnight by accident".
+  for (const at of ['3:00', '24:00', '03:60', '03:00:00', '', 'three']) {
+    const parsed = nightlyAt({ projects: { update: { at } } })
+    assert.equal(parsed.at, undefined, `${JSON.stringify(at)} is not a local time`)
+    assert.match(parsed.problem ?? '', /HH:MM/, `${JSON.stringify(at)} says why it is refused`)
+  }
+  assert.match(nightlyAt({ projects: { update: { at: 3 } } }).problem ?? '', /HH:MM/)
+  assert.match(nightlyAt({ projects: { update: '03:00' } }).problem ?? '', /projects\.update/)
+  // A day is a local calendar day and an hour goes both ways.
+  assert.equal(localDay(new Date(2026, 4, 12, 23, 30)), '2026-05-12')
+  assert.equal(localDay(new Date(2026, 0, 2, 0, 5)), '2026-01-02')
+  assert.equal(clock(180), '03:00')
+  assert.equal(clock(0), '00:00')
+  assert.equal(clock(1439), '23:59')
+  assert.equal(minutesOf('03:00'), 180)
+  assert.equal(minutesOf('3:00'), undefined)
+})
+
+test('the night runs when its hour comes, catches up a machine that slept, and never twice a day', () => {
+  // Before the hour, with no record for today: one timer for the rest of the wait.
+  assert.deepEqual(nightPlan(new Date(2026, 4, 12, 2, 0), 180, undefined), {
+    kind: 'wait',
+    delayMs: 60 * 60_000,
+  })
+  // The hour itself: run.
+  assert.deepEqual(nightPlan(new Date(2026, 4, 12, 3, 0), 180, '2026-05-11'), { kind: 'run' })
+  // The hour came and the machine was asleep, the window closed, or the host was down at 03:00: the day
+  // has no record, so the run comes now, the first time the host is up again.
+  assert.deepEqual(nightPlan(new Date(2026, 4, 12, 9, 15), 180, '2026-05-11'), { kind: 'run' })
+  assert.deepEqual(nightPlan(new Date(2026, 4, 12, 9, 15), 180, undefined), { kind: 'run' })
+  // Today already ran: the next one is tomorrow's hour, however late today is.
+  assert.deepEqual(nightPlan(new Date(2026, 4, 12, 9, 15), 180, '2026-05-12'), {
+    kind: 'wait',
+    delayMs: 17 * 60 * 60_000 + 45 * 60_000,
+  })
+  // The hour was moved later after the night already ran: today is done, so it waits for tomorrow's hour
+  // — never a second run in the same day.
+  assert.deepEqual(nightPlan(new Date(2026, 4, 12, 12, 0), 22 * 60, '2026-05-12'), {
+    kind: 'wait',
+    delayMs: 34 * 60 * 60_000,
+  })
+  // The day turned over: yesterday's run does not count for today, and the hour is still ahead.
+  assert.deepEqual(nightPlan(new Date(2026, 4, 13, 0, 30), 180, '2026-05-12'), {
+    kind: 'wait',
+    delayMs: 2.5 * 60 * 60_000,
+  })
+  // Midnight as the hour, at midnight: due.
+  assert.deepEqual(nightPlan(new Date(2026, 4, 13, 0, 0), 0, '2026-05-12'), { kind: 'run' })
+})
+
+test('the night is a file named by its day, and the newest one is the one to read', () => {
+  assert.equal(
+    nightlyFile('/home/u', '2026-05-12'),
+    '/home/u/.ultimate/projects-update-2026-05-12.json',
+  )
+  assert.deepEqual(
+    nightlyDays([
+      'projects-update-2026-05-11.json',
+      'projects-update-2026-05-12.json',
+      'projects-shown.json',
+      'projects-update.json',
+      'projects-restarts.json',
+      'projects-update-not-a-day.json',
+    ]),
+    ['2026-05-12', '2026-05-11'],
+  )
+  assert.deepEqual(nightlyDays([]), [])
+})
+
+test('the election is the exclusive creation of the night: one host wins, the rest do nothing', () => {
+  // No error from the exclusive create: this host took the turn.
+  assert.equal(tookTurn(undefined), true)
+  assert.equal(tookTurn(null), true)
+  // The file already exists: another host of the machine took it, and this one does nothing at all.
+  assert.equal(tookTurn(Object.assign(new Error('EEXIST'), { code: 'EEXIST' })), false)
+  // Anything else is a real failure and is not swallowed as "somebody else has it".
+  assert.throws(() => tookTurn(Object.assign(new Error('no space'), { code: 'ENOSPC' })), /no space/)
+})
+
+test('a night’s record is read whole or not at all, and a crooked part does not lose the turn', () => {
+  const record = {
+    day: '2026-05-12',
+    at: '03:00',
+    by: '/home/u/.ultimate/projects/app-1a2b3c4d',
+    claimedAt: '2026-05-12T06:00:00.000Z',
+    attempts: 1,
+    retryAt: '2026-05-12T06:45:00.000Z',
+    result: {
+      outcome: 'ran',
+      at: '2026-05-12T06:00:20.000Z',
+      line: 'Nightly update: 120 commits, 3b2f1a0 → 9c1d2e4',
+      lines: ['updated 120 commits (3b2f1a0 → 9c1d2e4)'],
+      supervisor: true,
+    },
+    seenAt: '2026-05-12T09:00:00.000Z',
+  }
+  assert.deepEqual(nightRecord(record), record)
+  // A file that is not a record is no record: nothing is repaired, nothing is half-read.
+  assert.equal(nightRecord('nope'), undefined)
+  assert.equal(nightRecord({ ...record, day: 'May 12' }), undefined)
+  assert.equal(nightRecord({ ...record, at: '3am' }), undefined)
+  assert.equal(nightRecord({ ...record, by: '' }), undefined)
+  assert.equal(nightRecord({ ...record, claimedAt: undefined }), undefined)
+  // A result nobody understands is dropped; the turn it names — and its retry — stay.
+  const crooked = nightRecord({ ...record, result: { outcome: 'maybe', at: 3 } })
+  assert.equal(crooked?.day, '2026-05-12')
+  assert.equal(crooked?.result, undefined)
+  assert.equal(crooked?.retryAt, '2026-05-12T06:45:00.000Z')
+  // A retry whose time does not parse is no retry at all.
+  assert.equal(nightRecord({ ...record, retryAt: 'later' })?.retryAt, undefined)
+})
+
+test('the morning reads one line: what moved, what restarted, what failed, what it stepped aside for', () => {
+  const restarted = (name: string, seconds: number) =>
+    ({ name, result: 'restarted', seconds }) as const
+  const moved = {
+    pull: { ok: true, from: '3b2f1a0', to: '9c1d2e4', commits: 120, install: 'skipped' },
+    projects: [restarted('api', 1), restarted('web', 2), restarted('billing-app', 1)],
+    restartSelf: false,
+  } as const
+  const ran = nightReport({ kind: 'ran', report: { ...moved, projects: [...moved.projects] } }, 'now')
+  assert.equal(ran.outcome, 'ran')
+  assert.equal(ran.line, 'Nightly update: 120 commits, 3b2f1a0 → 9c1d2e4 · restarted 3 projects in 4s')
+  assert.deepEqual(ran.lines, [
+    'updated 120 commits (3b2f1a0 → 9c1d2e4)',
+    'api — restarted in 1s',
+    'web — restarted in 2s',
+    'billing-app — restarted in 1s',
+  ])
+  // A quiet night has no line at all: the rail then shows no item.
+  const quiet = nightReport({ kind: 'ran', report: { projects: [], restartSelf: false } }, 'now')
+  assert.equal(quiet.line, undefined)
+  assert.equal(quiet.outcome, 'ran')
+  // The clone refusing the pull stops everything, and the line says what stopped it.
+  const refused = nightReport(
+    { kind: 'ran', report: { pull: { ok: false, refused: 'The clone has uncommitted changes' }, projects: [], restartSelf: false } },
+    'now',
+  )
+  assert.equal(refused.outcome, 'failed')
+  assert.equal(
+    refused.line,
+    'Nightly update: pull refused: The clone has uncommitted changes — nothing restarted',
+  )
+  // The one refusal the button survives: the hosts come back onto what is already on disk.
+  const diverged = nightReport(
+    {
+      kind: 'ran',
+      report: {
+        pull: { ok: false, refused: 'main has diverged from origin/main' },
+        projects: [restarted('api', 2)],
+        restartSelf: false,
+      },
+    },
+    'now',
+  )
+  assert.equal(
+    diverged.line,
+    'Nightly update: pull refused: main has diverged from origin/main — restarted what is already here · restarted 1 project in 2s',
+  )
+  // A host that did not come back is in the line, and the night is red for it.
+  const broken = nightReport(
+    {
+      kind: 'ran',
+      report: {
+        projects: [
+          restarted('api', 2),
+          { name: 'web', result: 'failed', reason: 'no answer in 20s' },
+          { name: 'cli', result: 'held', reason: 'tried 3 min ago' },
+        ],
+        restartSelf: false,
+      },
+    },
+    'now',
+  )
+  assert.equal(broken.outcome, 'failed')
+  assert.equal(broken.line, 'Nightly update: restarted 1 project in 2s · 1 failed (web) · 1 held back')
+  // A failed install is said, and it is not a success.
+  const install = nightReport(
+    {
+      kind: 'ran',
+      report: {
+        pull: { ok: true, from: 'aaaaaaa', to: 'bbbbbbb', commits: 2, install: 'failed' },
+        projects: [],
+        restartSelf: false,
+      },
+    },
+    'now',
+  )
+  assert.equal(install.outcome, 'failed')
+  assert.equal(install.line, 'Nightly update: 2 commits, aaaaaaa → bbbbbbb · install failed')
+  // `bin/` changed: a restart swaps the core, never the supervisor, and the line says what to do instead
+  // of pretending the machine is fully updated.
+  const supervisor = nightReport(
+    {
+      kind: 'ran',
+      report: {
+        pull: {
+          ok: true,
+          from: 'aaaaaaa',
+          to: 'bbbbbbb',
+          commits: 3,
+          install: 'skipped',
+          layers: { bin: true },
+        },
+        projects: [restarted('api', 2)],
+        restartSelf: false,
+      },
+    },
+    'now',
+  )
+  assert.equal(supervisor.supervisor, true)
+  assert.equal(
+    supervisor.line,
+    'Nightly update: 3 commits, aaaaaaa → bbbbbbb · restarted 1 project in 2s · bin/ changed: stop and start the host to load the new supervisor',
+  )
+  // A machine that was working is not a failure: it stepped aside, and says for how long.
+  const busy = nightReport({ kind: 'busy', working: ['api', 'web'], retry: true }, 'now')
+  assert.equal(busy.outcome, 'busy')
+  assert.equal(
+    busy.line,
+    'Nightly update skipped: 2 projects were working (api, web) — trying again in 45 min',
+  )
+  const busyOnce = nightReport({ kind: 'busy', working: ['api'], retry: false }, 'now')
+  assert.equal(
+    busyOnce.line,
+    'Nightly update skipped: 1 project was working (api) — the next run is tomorrow',
+  )
+  // What worked is not what is out of the question.
+  const failed = nightReport({ kind: 'failed', reason: 'the update extension is not enabled' }, 'now')
+  assert.equal(failed.outcome, 'failed')
+  assert.equal(failed.line, 'Nightly update failed: the update extension is not enabled')
+})
+
+test('the rail draws the record it was given, and nothing when there is nothing to say', () => {
+  const record = {
+    day: '2026-05-12',
+    at: '03:00',
+    by: '/home/u/.ultimate/projects/app-1a2b3c4d',
+    claimedAt: '2026-05-12T06:00:00.000Z',
+    result: {
+      outcome: 'ran' as const,
+      at: '2026-05-12T06:00:20.000Z',
+      line: 'Nightly update: 120 commits, 3b2f1a0 → 9c1d2e4',
+      lines: ['updated 120 commits (3b2f1a0 → 9c1d2e4)'],
+      supervisor: true as const,
+    },
+  }
+  assert.deepEqual(nightlyView(record), {
+    day: '2026-05-12',
+    at: '03:00',
+    outcome: 'ran',
+    line: 'Nightly update: 120 commits, 3b2f1a0 → 9c1d2e4',
+    lines: ['updated 120 commits (3b2f1a0 → 9c1d2e4)'],
+    supervisor: true,
+  })
+  // Put away, never run, nothing to say: no item on the rail.
+  assert.equal(nightlyView({ ...record, seenAt: '2026-05-12T09:00:00.000Z' }), undefined)
+  assert.equal(nightlyView({ ...record, result: undefined }), undefined)
+  assert.equal(nightlyView({ ...record, result: { ...record.result, line: undefined } }), undefined)
+  assert.equal(nightlyView(undefined), undefined)
+})
+
+test('the retry after a busy machine is one, and only by the host that took the turn', () => {
+  const by = '/home/u/.ultimate/projects/app-1a2b3c4d'
+  const night = {
+    day: '2026-05-12',
+    at: '03:00',
+    by,
+    claimedAt: '2026-05-12T06:00:00.000Z',
+    attempts: 1,
+    retryAt: '2026-05-12T06:45:00.000Z',
+    result: { outcome: 'busy' as const, at: '2026-05-12T06:00:05.000Z', line: 'skipped' },
+  }
+  const due = Date.parse('2026-05-12T06:45:00.000Z')
+  // Half an hour later: a timer for the rest of the wait.
+  assert.deepEqual(retryPlan(night, by, due - 15 * 60_000), {
+    kind: 'wait',
+    delayMs: 15 * 60_000,
+  })
+  // The retry came due while the host was restarting, or the machine slept: it runs at once.
+  assert.deepEqual(retryPlan(night, by, due + 60_000), { kind: 'run' })
+  assert.deepEqual(retryPlan(night, by, due), { kind: 'run' })
+  // Another host of the machine does not retry the night that was not its turn.
+  assert.deepEqual(retryPlan(night, '/home/u/.ultimate/projects/other-99', due), { kind: 'none' })
+  // Once is once.
+  assert.deepEqual(retryPlan({ ...night, attempts: 2 }, by, due), { kind: 'none' })
+  // Only a night that stepped aside is retried.
+  assert.deepEqual(
+    retryPlan({ ...night, result: { outcome: 'ran', at: 'now' } }, by, due),
+    { kind: 'none' },
+  )
+  // No retry stamp, a stamp that does not parse, and no record at all: nothing to retry.
+  assert.deepEqual(retryPlan({ ...night, retryAt: undefined }, by, due), { kind: 'none' })
+  assert.deepEqual(retryPlan({ ...night, retryAt: 'later' }, by, due), { kind: 'none' })
+  assert.deepEqual(retryPlan(undefined, by, due), { kind: 'none' })
+})
+
+test('the machine is idle only when every host that answered says nothing is working', () => {
+  const answers = [
+    { name: 'api', working: 2 },
+    { name: 'web', working: 0 },
+    { name: 'cli', working: null },
+  ]
+  assert.deepEqual(workingNames(answers), ['api'])
+  assert.deepEqual(workingNames([{ name: 'web', working: 0 }, { name: 'cli', working: null }]), [])
+  // A host that did not answer is not a working one: its silence is not a reason to skip the night.
+  assert.deepEqual(workingNames([{ name: 'cli', working: null }]), [])
 })
