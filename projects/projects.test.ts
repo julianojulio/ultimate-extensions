@@ -1333,6 +1333,26 @@ test('the morning reads one line: what moved, what restarted, what failed, what 
     busyOnce.line,
     'Nightly update skipped: 1 project was working (api) — the next run is tomorrow',
   )
+  // A machine with more working projects than it names says there are more.
+  const busyMany = nightReport(
+    { kind: 'busy', working: ['api', 'web', 'cli', 'billing-app'], retry: true },
+    'now',
+  )
+  assert.equal(
+    busyMany.line,
+    'Nightly update skipped: 4 projects were working (api, web, cli, …) — trying again in 45 min',
+  )
+  // The host that took the night swapped its own core: the record is read on every rail of the machine, so it
+  // never says "this window".
+  const itself = nightReport(
+    {
+      kind: 'ran',
+      report: { projects: [{ name: 'app-one', result: 'self' }], restartSelf: true },
+    },
+    'now',
+  )
+  assert.deepEqual(itself.lines, ['app-one — restarted itself'])
+  assert.equal(itself.line, 'Nightly update: restarted 1 project')
   // What worked is not what is out of the question.
   const failed = nightReport({ kind: 'failed', reason: 'the update extension is not enabled' }, 'now')
   assert.equal(failed.outcome, 'failed')

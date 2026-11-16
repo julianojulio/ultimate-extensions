@@ -216,10 +216,10 @@ The night does exactly what a click of the button does: the clone once through U
 every host that runs old code restarted one at a time, this one last (it swaps itself through its own
 supervisor). The refusals are the button's, too — a dirty clone, another branch or a landing stops the
 night; a diverged clone only skips the update. **`bin/` is the exception a restart cannot fix**: a pull that
-touched the supervisor cannot be applied by a swap, so the line ends with `bin/ changed: the new supervisor
-needs a manual stop and start` and every host keeps running the old one until a host is stopped and started
-again — from that project's tile (`stop` in its panel, then a click to bring it up), or by stopping the
-terminal Ultimate and running it again.
+touched the supervisor cannot be applied by a swap, so the line says `bin/ changed: the new supervisor needs
+a manual stop and start` and every host keeps running the old one until a host is stopped and started again —
+from that project's tile (`stop` in its panel, then a click to bring it up), or by stopping the terminal
+Ultimate and running it again.
 
 If the machine is asleep at `at`, or no window is open, the night comes the next time a host is up: a day
 that has no run yet and whose hour has passed runs **at once** (that is the catch-up). It never runs twice

@@ -386,7 +386,8 @@ function Column() {
  * A panel anchored to the right of a foot item, which is where the rail's 24px buttons are: it closes when
  * the pointer leaves both (with the usual moment of grace over the 8px between them), on Escape and on any
  * scroll, because it is anchored where it opened. Whoever uses it decides what opens it — a click for the
- * update button, the pointer for the line of the last night.
+ * update button, the pointer for the line of the last night — and a touch never opens or closes by pointer:
+ * there is no leaving a panel with a finger, so the click is the gesture.
  *
  * Two items at the foot of the rail use it, so the mechanics of "a panel beside a 24px button at the bottom
  * of the window" are written once.
@@ -396,12 +397,14 @@ function useFootPanel(onOpenChange?: (open: boolean) => void) {
   const [anchor, setAnchor] = useState<CSSProperties>()
   const frame = useRef<HTMLDivElement>(null)
   const exit = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const delay = useRef<ReturnType<typeof setTimeout>>(undefined)
   const show = (next: boolean) => {
     setOpen(next)
     onOpenChange?.(next)
   }
   const close = () => {
     clearTimeout(exit.current)
+    clearTimeout(delay.current)
     show(false)
   }
   /** Beside the button and upwards: the foot of the rail is at the bottom of the window. */
@@ -411,14 +414,30 @@ function useFootPanel(onOpenChange?: (open: boolean) => void) {
     show(true)
   }
   /** Leaving the button and its panel closes it, with the moment of grace over the gap between them. */
-  const leave = () => {
+  const leave = (event: { pointerType: string }) => {
+    clearTimeout(delay.current)
+    if (event.pointerType !== 'mouse') return
     clearTimeout(exit.current)
     exit.current = setTimeout(close, 200)
   }
   /** Reaching the panel cancels that moment: it is 8px to the right of a 24px button, and its lines are to be
    * read and selected, not passed over. */
   const enter = () => clearTimeout(exit.current)
-  useEffect(() => () => clearTimeout(exit.current), [])
+  /**
+   * The pointer resting on an item opens it, as it does on a tile — after the rail's own moment, so crossing
+   * the foot of the window does not drop a panel over the conversation. A finger has no resting pointer: a
+   * touch opens nothing here, and its click does.
+   */
+  const hover = (event: { pointerType: string }) => {
+    enter()
+    if (event.pointerType !== 'mouse' || open) return
+    clearTimeout(delay.current)
+    delay.current = setTimeout(openPanel, OPEN_DELAY)
+  }
+  useEffect(() => () => {
+    clearTimeout(exit.current)
+    clearTimeout(delay.current)
+  }, [])
   useEffect(() => {
     if (!open) return undefined
     const onKeyDown = (event: KeyboardEvent) => {
@@ -432,7 +451,7 @@ function useFootPanel(onOpenChange?: (open: boolean) => void) {
       document.removeEventListener('scroll', onScroll, { capture: true })
     }
   }, [open])
-  return { open, anchor, frame, openPanel, close, toggle: () => (open ? close() : openPanel()), enter, leave }
+  return { open, anchor, frame, openPanel, close, hover, enter, leave }
 }
 
 /**
@@ -573,7 +592,7 @@ function UpdateButton({
 function Nightly({ nightly, onChanged }: { nightly: NightlyView; onChanged: () => Promise<unknown> }) {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string>()
-  const { open, anchor, frame, toggle, close, openPanel, enter, leave } = useFootPanel()
+  const { open, anchor, frame, close, openPanel, hover, leave } = useFootPanel()
   const dismiss = async () => {
     if (pending) return
     setError(undefined)
@@ -595,20 +614,13 @@ function Nightly({ nightly, onChanged }: { nightly: NightlyView; onChanged: () =
         ? 'text-warning'
         : 'text-muted-foreground'
   return (
-    <div
-      className="relative flex"
-      onPointerEnter={() => {
-        enter()
-        // The rail's idiom: the pointer resting on an item opens its panel. A click does the same, for touch.
-        if (!open) openPanel()
-      }}
-      onPointerLeave={leave}
-      ref={frame}
-    >
+    <div className="relative flex" onPointerEnter={hover} onPointerLeave={leave} ref={frame}>
       <Icon
         className="size-6"
         label={nightly.line}
-        onClick={() => (open ? close() : toggle())}
+        // A mouse has already opened the panel by resting on the item; a finger, and a click, open it — and
+        // nothing closes it but the ✕, Escape, a scroll, or the pointer leaving. A touch cannot leave.
+        onClick={openPanel}
         title={nightly.line}
       >
         <MoonIcon className={cn('size-3.5', tone)} />

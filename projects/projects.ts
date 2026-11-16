@@ -1151,7 +1151,9 @@ export function nightReport(input: NightlyInput, at: string): NightlyResult {
   // starts a host: said plainly, never counted as an update that took.
   if (supervisor) parts.push('bin/ changed: the new supervisor needs a manual stop and start')
   for (const outcome of report.projects)
-    lines.push(outcome.result === 'self' ? `${outcome.name} — this host restarted itself` : outcomeLine(outcome))
+    // `self` is the host that took the night: it swapped its own core, and the record is read on the rails of
+    // every window of the machine, where "this window" would name the wrong one.
+    lines.push(outcome.result === 'self' ? `${outcome.name} — restarted itself` : outcomeLine(outcome))
   const line = parts.length ? `Nightly update: ${parts.join(' · ')}` : undefined
   const installFailed = pull?.ok === true && pull.install === 'failed'
   const wrong = (pull !== undefined && !pull.ok) || failed.length > 0 || installFailed
