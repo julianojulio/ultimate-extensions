@@ -91,6 +91,8 @@ export interface Section {
 export interface Clone {
   /** Commits on `origin/<branch>` the clone lacks, as of the last fetch. */
   behind: number
+  /** Commits of the clone's own that origin lacks, from the same reading: what a diverged pull waits for. */
+  ahead?: number
   /** The lockfile names packages that are not installed: the next pull installs them. */
   install: boolean
   /**
@@ -99,6 +101,22 @@ export interface Clone {
    * says it will not update.
    */
   refused?: string
+  /** The comparison of the range, as `update` offers it (DiffsHub). Shown only when it is an https address. */
+  compare?: string
+}
+
+/**
+ * The clone's own commits that origin lacks, read when a pull was refused for divergence: the branch, how
+ * many commits of yours are not on `origin/<branch>` (`update`'s `ahead`), and the comparison it offered for
+ * the range. The rule is not touched by it: a diverged clone only lets the restarts go on (`afterRefusal`).
+ */
+export interface Diverged {
+  /** The branch the clone is on, from `update`'s refusal (`main`). */
+  branch: string
+  /** Commits of the clone that `origin/<branch>` does not have. Absent when the reading did not say. */
+  ahead?: number
+  /** The comparison `update` offers for the range, when it is an https address. */
+  compare?: string
 }
 
 /** What the `splash` action left: the animation on or off in this machine's settings. */
@@ -201,6 +219,8 @@ export interface UpdateReport {
   pull?: PullResult
   /** Each host, in the order it was tried, this window's own last. */
   projects: RestartOutcome[]
+  /** The clone's own commits, when the pull was refused for divergence and the hosts restarted anyway. */
+  diverged?: Diverged
   /** This window's host is in the list and only the window can restart it: `web.tsx` calls the SDK's
    * `restart()` and the core does the swap with its own rollback. */
   restartSelf: boolean
@@ -271,14 +291,19 @@ export interface NightlyRecord {
  * and the hosts are not read again to say what happened.
  */
 export interface NightlyResult {
-  /** `ran` updated the clone and the hosts; `busy` stepped aside; `failed` could not do the work. */
-  outcome: 'ran' | 'busy' | 'failed'
+  /**
+   * `ran` updated the clone and the hosts; `busy` stepped aside; `diverged` did everything a diverged clone
+   * allows — the restarts — and left the pull waiting for a merge; `failed` could not do the work.
+   */
+  outcome: 'ran' | 'busy' | 'diverged' | 'failed'
   /** When the run (or the step aside) ended (ISO). */
   at: string
   /** The one line the rail shows. Absent when the night had nothing worth a line. */
   line?: string
   /** The detail, one line per host and of the pull, for the panel. */
   lines?: string[]
+  /** The diverged clone the night waited on: how many commits of yours, and the range `update` offers. */
+  diverged?: Diverged
   /** `bin/` changed in the pull: the supervisor still runs the old one, and only a person restarts it. */
   supervisor?: boolean
 }
@@ -294,11 +319,13 @@ export interface NightlyView {
   at: string
   /** The record is the machine's today: the night that just passed — "last night". */
   today: boolean
-  outcome: 'ran' | 'busy' | 'failed'
+  outcome: 'ran' | 'busy' | 'diverged' | 'failed'
   /** The one line. */
   line: string
   /** The detail, one line per host and of the pull. */
   lines: string[]
+  /** The clone waited for a merge: the number of your commits and the comparison, when `update` offered one. */
+  diverged?: Diverged
   /** The night ended with `bin/` changed and the supervisor not restarted. */
   supervisor?: true
 }

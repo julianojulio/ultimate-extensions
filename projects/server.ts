@@ -135,6 +135,7 @@ import {
   afterRefusal,
   ago,
   clock,
+  divergedOf,
   localDay,
   nightPlan,
   nightRecord,
@@ -174,6 +175,8 @@ import {
 } from './projects.ts'
 import type { Candidate, Planned } from './projects.ts'
 import type {
+  Clone,
+  Diverged,
   State,
   Measurement,
   NightlyRecord,
@@ -277,9 +280,11 @@ const Messages = { name: 'messages' } as const
 interface UpdateService {
   state(): Promise<{
     behind: number
+    ahead?: number
     install: boolean
     restart: boolean
     refused?: string
+    compare?: string
     preview?: true
   }>
 }
@@ -418,18 +423,19 @@ function asCount(value: unknown): number | null {
  * is that extension's answer about **this** process, which is why the same field is asked of every host. What
  * it refuses travels with the rest: the button says, before the click, that a diverged clone is not updated.
  */
-async function cloneState(
-  ctx: Context,
-): Promise<{ behind: number; install: boolean; restart: boolean; refused?: string } | undefined> {
+async function cloneState(ctx: Context): Promise<(Clone & { restart: boolean }) | undefined> {
   const update = ctx.host.want<UpdateService>(Update)
   if (!update) return undefined
   try {
     const state = await update.state()
+    const ahead = asCount(state.ahead)
     return {
       behind: asCount(state.behind) ?? 0,
+      ...(ahead ? { ahead } : {}),
       install: state.install === true,
       restart: state.restart === true,
       ...(typeof state.refused === 'string' ? { refused: state.refused } : {}),
+      ...(typeof state.compare === 'string' && state.compare ? { compare: state.compare } : {}),
     }
   } catch {
     return undefined
@@ -1214,6 +1220,10 @@ async function updateAndRestart(ctx: Context): Promise<UpdateReport> {
   if (update) await ctx.host.invoke('update', 'check', {}, own).catch(() => undefined)
   const clone = await cloneState(ctx)
   let pull: PullResult | undefined
+  // A diverged clone is the one refusal the restarts go on from, and the night says why the pull waited:
+  // how many commits of yours origin lacks and the range `update` offers. The rule (`afterRefusal`) is the
+  // same one it always was.
+  let diverged: Diverged | undefined
   if (pullOwed(clone)) {
     if (!update)
       throw new Error('The update extension is not enabled in this window, so the clone cannot be updated')
@@ -1222,8 +1232,10 @@ async function updateAndRestart(ctx: Context): Promise<UpdateReport> {
     // A refusal is reported as it came, and the rest of the run does not happen — except for the clone that
     // has diverged, which is clean and committed: the restart loads what is already on disk (see
     // `afterRefusal`).
-    if (!pull.ok && afterRefusal(pull.refused) === 'stop')
-      return { pull, projects: [], restartSelf: false }
+    if (!pull.ok) {
+      if (afterRefusal(pull.refused) === 'stop') return { pull, projects: [], restartSelf: false }
+      diverged = divergedOf(clone, pull.refused)
+    }
   }
   // After the pull this host's own view is fresh (the update refreshes it); `candidatesOf` asks every other
   // host to look again, so none of them answers with what it knew before the clone moved.
@@ -1265,7 +1277,7 @@ async function updateAndRestart(ctx: Context): Promise<UpdateReport> {
     if (!target.origin) continue
     projects.push(await restartHost({ name: target.name, origin: target.origin }, own))
   }
-  return { ...(pull ? { pull } : {}), projects, restartSelf }
+  return { ...(pull ? { pull } : {}), ...(diverged ? { diverged } : {}), projects, restartSelf }
 }
 
 /** Fastest a second run of the night may follow one that could not even take its turn. */

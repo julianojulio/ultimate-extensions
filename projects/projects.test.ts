@@ -90,6 +90,10 @@ import {
   pullLine,
   pullOwed,
   afterRefusal,
+  divergedOf,
+  divergenceNotice,
+  nightlyTone,
+  safeLink,
   restartKey,
   restartLog,
   restartPlan,
@@ -113,7 +117,7 @@ import {
   workingNames,
 } from './projects.ts'
 import type { Candidate, Target } from './projects.ts'
-import type { Measurement, Project, PullResult, Section } from './types.ts'
+import type { Measurement, Project, PullResult, Section, UpdateReport } from './types.ts'
 
 /** A row as the server sends it: up, with so many conversations working and so many questions. */
 const running = (working: number | null, openQuestions: number | null = 0): Project => ({
@@ -1249,7 +1253,8 @@ test('the morning reads one line: what moved, what restarted, what failed, what 
     refused.line,
     'Nightly update: pull refused: The clone has uncommitted changes — nothing restarted',
   )
-  // The one refusal the button survives: the hosts come back onto what is already on disk.
+  // The one refusal the button survives: the hosts come back onto what is already on disk, and the night is
+  // its own outcome — not `failed`, and the line says what the merge waits for.
   const diverged = nightReport(
     {
       kind: 'ran',
@@ -1261,9 +1266,10 @@ test('the morning reads one line: what moved, what restarted, what failed, what 
     },
     'now',
   )
+  assert.equal(diverged.outcome, 'diverged')
   assert.equal(
     diverged.line,
-    'Nightly update: pull refused: main has diverged from origin/main — restarted what is already here · restarted 1 project in 2s',
+    'Nightly update: the clone has commits of its own that origin/main does not, so the pull waits for a merge · restarted 1 project in 2s',
   )
   // A host that did not come back is in the line, and the night is red for it.
   const broken = nightReport(
@@ -1357,6 +1363,141 @@ test('the morning reads one line: what moved, what restarted, what failed, what 
   const failed = nightReport({ kind: 'failed', reason: 'the update extension is not enabled' }, 'now')
   assert.equal(failed.outcome, 'failed')
   assert.equal(failed.line, 'Nightly update failed: the update extension is not enabled')
+})
+
+test('a diverged night is its own outcome: amber, with the number of your commits and the merge it waits for', () => {
+  const restarted = (name: string, seconds: number) => ({ name, result: 'restarted', seconds }) as const
+  const night = (ahead: number | undefined, projects: UpdateReport['projects'], compare?: string) =>
+    nightReport(
+      {
+        kind: 'ran',
+        report: {
+          pull: { ok: false, refused: 'main has diverged from origin/main' },
+          projects,
+          restartSelf: false,
+          diverged: { branch: 'main', ...(ahead ? { ahead } : {}), ...(compare ? { compare } : {}) },
+        },
+      },
+      'now',
+    )
+  // The night of the report: six of your commits are not on origin, the pull cannot fast-forward, and every
+  // host that ran old code came back — a full night that is neither `ran` nor `failed`.
+  const six = night(6, [restarted('api', 4), restarted('web', 21)])
+  assert.equal(six.outcome, 'diverged')
+  assert.equal(
+    six.line,
+    'Nightly update: 6 commits of yours are not on origin/main, so the pull waits for a merge · restarted 2 projects in 25s',
+  )
+  // The detail behind it is the hosts: the panel already shows the notice as the line, and does not say it
+  // twice.
+  assert.deepEqual(six.lines, ['api — restarted in 4s', 'web — restarted in 21s'])
+  assert.deepEqual(six.diverged, { branch: 'main', ahead: 6 })
+  // Nothing to restart: the line stays. The merge is the information, not "nothing to do".
+  const waiting = night(1, [])
+  assert.equal(waiting.outcome, 'diverged')
+  assert.equal(
+    waiting.line,
+    'Nightly update: 1 commit of yours is not on origin/main, so the pull waits for a merge',
+  )
+  // A reading with no `ahead` says the same thing without a number — never an invented zero.
+  const unknownAhead = night(undefined, [])
+  assert.equal(unknownAhead.outcome, 'diverged')
+  assert.equal(
+    unknownAhead.line,
+    'Nightly update: the clone has commits of its own that origin/main does not, so the pull waits for a merge',
+  )
+  // The branch is the one the refusal names, and the comparison is carried for the panel.
+  const compare = 'https://diffshub.com/julianojulio/ultimate-extensions/compare/aaaaaaa...bbbbbbb'
+  assert.deepEqual(night(2, [], compare).diverged, { branch: 'main', ahead: 2, compare })
+  // The rule is not changed by any of it: a refusal the click stops on is `failed`, and so is a host that did
+  // not come back — the divergence is said alongside, never instead.
+  const dirty = nightReport(
+    { kind: 'ran', report: { pull: { ok: false, refused: 'The clone has uncommitted changes' }, projects: [], restartSelf: false } },
+    'now',
+  )
+  assert.equal(dirty.outcome, 'failed')
+  assert.equal(dirty.diverged, undefined)
+  const broken = night(6, [{ name: 'web', result: 'failed', reason: 'no answer in 20s' }])
+  assert.equal(broken.outcome, 'failed')
+  assert.match(broken.line ?? '', /6 commits of yours are not on origin\/main/)
+  assert.match(broken.line ?? '', /1 failed \(web\)/)
+  assert.deepEqual(broken.diverged, { branch: 'main', ahead: 6 })
+  // The rail's colour, in one place: amber for the night that stepped aside and for the one that waited on a
+  // merge, red only for the one that could not do the work, quiet grey for the one that did it.
+  assert.equal(nightlyTone('ran'), 'calm')
+  assert.equal(nightlyTone('busy'), 'warning')
+  assert.equal(nightlyTone('diverged'), 'warning')
+  assert.equal(nightlyTone('failed'), 'error')
+  // A sentence with the branch of the refusal, and never with a branch it did not read.
+  assert.equal(
+    divergenceNotice({ branch: 'main', ahead: 3 }),
+    '3 commits of yours are not on origin/main, so the pull waits for a merge',
+  )
+  assert.equal(
+    divergenceNotice(undefined),
+    'the clone has commits of its own that origin/main does not, so the pull waits for a merge',
+  )
+})
+
+test('the diverged reading comes from the clone and the refusal, and a link only when it is https', () => {
+  const clone = {
+    ahead: 6,
+    compare: 'https://diffshub.com/juliano/ultimate-extensions/compare/aaaaaaa...bbbbbbb',
+  }
+  assert.deepEqual(divergedOf(clone, 'main has diverged from origin/main'), {
+    branch: 'main',
+    ahead: 6,
+    compare: clone.compare,
+  })
+  // Nothing is invented: no `ahead` gives no number, and a refusal that is not divergence gives nothing at
+  // all — that is the same predicate the restarts obey (`afterRefusal`).
+  assert.deepEqual(divergedOf({ compare: clone.compare }, 'main has diverged from origin/main'), {
+    branch: 'main',
+    compare: clone.compare,
+  })
+  assert.equal(divergedOf(clone, 'The clone has uncommitted changes'), undefined)
+  assert.equal(divergedOf(clone, undefined), undefined)
+  // A link is https with a host, or it is dropped: a `javascript:` address from a clone's own reading never
+  // becomes an href, and plain http is not upgraded on its own.
+  assert.equal(safeLink(clone.compare), clone.compare)
+  assert.equal(safeLink('javascript:alert(1)'), undefined)
+  assert.equal(safeLink('http://diffshub.com/x'), undefined)
+  assert.equal(safeLink('not a url'), undefined)
+  assert.equal(safeLink(42), undefined)
+  assert.equal(divergedOf({ ...clone, compare: 'javascript:alert(1)' }, 'main has diverged from origin/main')?.compare, undefined)
+  // A record of a diverged night is read whole, and a crooked part does not lose the night that ran.
+  const record = {
+    day: '2026-05-12',
+    at: '03:00',
+    by: '/home/u/.ultimate/projects/app-1a2b3c4d',
+    claimedAt: '2026-05-12T06:00:00.000Z',
+    result: {
+      outcome: 'diverged' as const,
+      at: '2026-05-12T06:00:25.000Z',
+      line: 'Nightly update: 6 commits of yours are not on origin/main, so the pull waits for a merge',
+      diverged: { branch: 'main', ahead: 6, compare: clone.compare },
+    },
+  }
+  assert.deepEqual(nightRecord(record)?.result?.diverged, { branch: 'main', ahead: 6, compare: clone.compare })
+  // A zero, a crooked branch and a bad link are dropped one by one; the outcome itself is kept.
+  const crooked = nightRecord({
+    ...record,
+    result: { ...record.result, diverged: { branch: 'ma in', ahead: 0, compare: 'javascript:x' } },
+  })
+  assert.equal(crooked?.result?.outcome, 'diverged')
+  assert.equal(crooked?.result?.diverged, undefined)
+  assert.deepEqual(
+    nightRecord({ ...record, result: { ...record.result, diverged: { branch: 'main', ahead: 0 } } })?.result
+      ?.diverged,
+    { branch: 'main' },
+  )
+  // The rail draws it: the outcome and the range travel to the panel, and the view does not invent either.
+  assert.deepEqual(nightlyView(nightRecord(record), '2026-05-12')?.diverged, {
+    branch: 'main',
+    ahead: 6,
+    compare: clone.compare,
+  })
+  assert.equal(nightlyView(nightRecord(record), '2026-05-12')?.outcome, 'diverged')
 })
 
 test('the rail draws the record it was given, and nothing when there is nothing to say', () => {

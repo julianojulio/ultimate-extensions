@@ -79,6 +79,7 @@ import {
   initials,
   linkOf,
   measured,
+  nightlyTone,
   outcomeLine,
   pullLine,
   questionCount,
@@ -583,8 +584,9 @@ function UpdateButton({
 /**
  * The line of the last night, at the foot of the rail — one item, and only when the night had something to
  * say. The moon is quiet after a night that updated, amber after one that stepped aside for a working
- * project, red after one that could not do the work; the panel beside it carries the detail and the one
- * button that matters in the morning, which is `Dismiss`: read once, then out of the way.
+ * project or that restarted everything it could while the pull waited for a merge, red after one that could
+ * not do the work; the panel beside it carries the detail, the range the update offers for a diverged clone,
+ * and the one button that matters in the morning, which is `Dismiss`: read once, then out of the way.
  *
  * Everything drawn here came from `list` — the record of the night as this machine wrote it — so nothing is
  * computed on screen: the words of the run are the ones composed when it ended.
@@ -607,10 +609,11 @@ function Nightly({ nightly, onChanged }: { nightly: NightlyView; onChanged: () =
       setPending(false)
     }
   }
+  const night = nightlyTone(nightly.outcome)
   const tone =
-    nightly.outcome === 'failed'
+    night === 'error'
       ? 'text-error'
-      : nightly.outcome === 'busy'
+      : night === 'warning'
         ? 'text-warning'
         : 'text-muted-foreground'
   return (
@@ -658,6 +661,16 @@ function Nightly({ nightly, onChanged }: { nightly: NightlyView; onChanged: () =
                   {line}
                 </p>
               ))}
+            {nightly.diverged?.compare && (
+              <a
+                className="w-fit text-[10.5px] text-muted-foreground hover:text-brand"
+                href={nightly.diverged.compare}
+                rel="noreferrer"
+                target="_blank"
+              >
+                DiffsHub ↗
+              </a>
+            )}
             {error && <p className="text-[10.5px] leading-relaxed break-words text-error">{error}</p>}
           </div>
         </div>

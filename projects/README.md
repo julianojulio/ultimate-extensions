@@ -215,9 +215,13 @@ and is not restarted either.
 The night does exactly what a click of the button does: the clone once through Ultimate's own update, then
 every host that runs old code restarted one at a time, this one last (it swaps itself through its own
 supervisor). The refusals are the button's, too — a dirty clone, another branch or a landing stops the
-night; a diverged clone only skips the update. **`bin/` is the exception a restart cannot fix**: a pull that
-touched the supervisor cannot be applied by a swap, so the line says `bin/ changed: the new supervisor needs
-a manual stop and start` and every host keeps running the old one until a host is stopped and started again —
+night; a diverged clone only skips the update, and the night gets its own outcome (`diverged`): the moon is
+amber, never red, and the line says how many commits of yours are not on `origin/<branch>` and that the pull
+waits for a merge (`6 commits of yours are not on origin/main, so the pull waits for a merge · restarted 6
+projects in 25s`). That line appears even when there is nothing to restart: the merge is the information.
+**`bin/` is the exception a restart cannot fix**: a pull that touched the supervisor cannot be applied by a
+swap, so the line says `bin/ changed: the new supervisor needs a manual stop and start` and every host keeps
+running the old one until a host is stopped and started again —
 from that project's tile (`stop` in its panel, then a click to bring it up), or by stopping the terminal
 Ultimate and running it again.
 
@@ -226,9 +230,10 @@ that has no run yet and whose hour has passed runs **at once** (that is the catc
 in the same local day — the turn is a file only one host of the machine can create.
 
 In the morning the rail has one quiet line at its foot, a moon between the tiles and `⟳`: what moved
-(`120 commits, 3b2f1a0 → 9c1d2e4`), what restarted and in how long, what failed, what it stepped aside for.
-Hovering or clicking it opens the detail; the ✕ puts it away for the day. One item, never one per project,
-and nothing at all after a night with nothing to do.
+(`120 commits, 3b2f1a0 → 9c1d2e4`), what restarted and in how long, what failed, what it stepped aside for,
+what waited for a merge (amber, with the number of your commits, and the range `update` offers as a DiffsHub
+link when it has one). Hovering or clicking it opens the detail; the ✕ puts it away for the day. One item,
+never one per project, and nothing at all after a night with nothing to do.
 
 ### The record of the night
 
@@ -255,10 +260,14 @@ The file's **creation** is the election: it is created exclusively (`O_EXCL`), s
 machine takes the turn for a day, and every other host finds it there and does nothing at all — seven
 windows arming the same hour produce one run. The winner rewrites it through a temporary and a `rename`
 with what came of the night (`result`), the retry it owes (`retryAt`, only after a busy machine and only
-once), and whether its line was read (`seenAt`). A file that cannot be read is no record at all: nothing is
-repaired or rewritten, and that day does not run again — the file is what says the turn was taken. The
-next night drops the older ones, so one file stays. Deleting it is safe: the next start takes the turn
-again and that day's night runs.
+once), and whether its line was read (`seenAt`). A night whose pull was refused for divergence records
+`"outcome": "diverged"` and a `diverged` block of its own with the branch, the number of your commits and the
+address `update` offered (`{ "branch": "main", "ahead": 6, "compare": "https://diffshub.com/…" }`), so the
+panel says how many commits of yours the merge waits for without reading the clone again, and links the range
+only when that address is `https`. A file that cannot be read is no record at all: nothing is repaired or
+rewritten, and that day does not run again — the file is what says the turn was taken. The next night drops
+the older ones, so one file stays. Deleting it is safe: the next start takes the turn again and that day's
+night runs.
 
 ## Actions
 

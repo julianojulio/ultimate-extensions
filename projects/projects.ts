@@ -19,6 +19,7 @@ import { createHash } from 'node:crypto'
 import { basename, isAbsolute, join, resolve } from 'node:path'
 import type {
   Clone,
+  Diverged,
   Measurement,
   NightlyRecord,
   NightlyResult,
@@ -776,6 +777,55 @@ export function afterRefusal(refused: string | undefined): 'restart' | 'stop' {
 }
 
 /**
+ * An address a panel may link to: absolute, `https`, and with a host. Nothing else passes — a `javascript:`
+ * address from a clone's own reading is not a link, and plain `http` is a downgrade nobody asked for. A value
+ * that does not pass is dropped, never repaired.
+ */
+export function safeLink(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' && url.hostname ? url.toString() : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The diverged clone of a refused pull, from what `update` said about it: the branch is the one the refusal
+ * names (`main has diverged from origin/main`), the number is its `ahead`, and the comparison is the address
+ * it offers — kept only when it is an `https` one. Nothing is invented: a reading without a number gives a
+ * `Diverged` without one.
+ */
+export function divergedOf(
+  clone: { ahead?: number; compare?: string } | undefined,
+  refused: string | undefined,
+): Diverged | undefined {
+  const match = refused === undefined ? null : DIVERGED.exec(refused)
+  if (!match) return undefined
+  const ahead = measured(clone?.ahead)
+  const compare = safeLink(clone?.compare)
+  return {
+    branch: match[1],
+    ...(ahead ? { ahead } : {}),
+    ...(compare ? { compare } : {}),
+  }
+}
+
+/**
+ * The sentence of a diverged night: **what the user has to do** for the next pull to work. The number of
+ * commits of theirs that `origin/<branch>` does not have, and the merge that lets the clone fast-forward
+ * again. Without a number the sentence says the same thing without one — it never prints an invented zero.
+ */
+export function divergenceNotice(diverged: Diverged | undefined): string {
+  const remote = `origin/${diverged?.branch ?? 'main'}`
+  const ahead = measured(diverged?.ahead)
+  if (ahead)
+    return `${ahead} ${ahead === 1 ? 'commit' : 'commits'} of yours ${ahead === 1 ? 'is' : 'are'} not on ${remote}, so the pull waits for a merge`
+  return `the clone has commits of its own that ${remote} does not, so the pull waits for a merge`
+}
+
+/**
  * What the button promises, in its `title` and `aria-label`: what the click updates and how many projects
  * it restarts — `Update and restart: update 5 commits · restart 2 projects`. Nothing to do is `undefined`:
  * the button is not on the rail at all.
@@ -1077,14 +1127,31 @@ export function nightRecord(value: unknown): NightlyRecord | undefined {
 function nightResult(value: unknown): NightlyResult | undefined {
   if (!isObject(value)) return undefined
   const outcome = value.outcome
-  if (outcome !== 'ran' && outcome !== 'busy' && outcome !== 'failed') return undefined
+  if (outcome !== 'ran' && outcome !== 'busy' && outcome !== 'failed' && outcome !== 'diverged')
+    return undefined
   if (typeof value.at !== 'string') return undefined
   const result: NightlyResult = { outcome, at: value.at }
   if (typeof value.line === 'string' && value.line) result.line = value.line
   if (Array.isArray(value.lines) && value.lines.every((line) => typeof line === 'string'))
     result.lines = value.lines as string[]
+  const diverged = divergedReading(value.diverged)
+  if (diverged) result.diverged = diverged
   if (value.supervisor === true) result.supervisor = true
   return result
+}
+
+/**
+ * The diverged clone as a record carries it, when it is one: a branch with no space in it, a positive number
+ * of commits (a zero is not something a merge would wait for) and an `https` comparison. A crooked part is
+ * dropped on its own — the rest of the night is still the night that ran.
+ */
+function divergedReading(value: unknown): Diverged | undefined {
+  if (!isObject(value)) return undefined
+  const branch = typeof value.branch === 'string' ? value.branch : undefined
+  if (!branch || !/^\S+$/.test(branch)) return undefined
+  const ahead = measured(typeof value.ahead === 'number' ? value.ahead : undefined)
+  const compare = safeLink(value.compare)
+  return { branch, ...(ahead ? { ahead } : {}), ...(compare ? { compare } : {}) }
 }
 
 /** What the run found, in the words of the record: what the flow reported, the working projects that made
@@ -1100,8 +1167,13 @@ export type NightlyInput =
  * aside for — and, when the pull touched `bin/`, that the supervisor keeps running the old one until a
  * person stops and starts the host: a restart swaps the core, never the supervisor.
  *
+ * A diverged clone is its own outcome: the night restarted everything it could and the pull waits for a
+ * merge, so the item is amber and the line says how many commits of yours are not on `origin/<branch>` —
+ * never red, which would read as "the night did not work". Only a refusal the click stops on, a host that
+ * did not come back or a failed install is `failed`.
+ *
  * A night with nothing to do has no line at all: the rail then shows no item, which is the quiet the
- * morning deserves.
+ * morning deserves. A diverged night always has its line: the merge is the information.
  */
 export function nightReport(input: NightlyInput, at: string): NightlyResult {
   if (input.kind === 'failed') {
@@ -1119,7 +1191,9 @@ export function nightReport(input: NightlyInput, at: string): NightlyResult {
   }
   const { report } = input
   const pull = report.pull
-  const wentOn = pull !== undefined && !pull.ok && afterRefusal(pull.refused) === 'restart'
+  // A diverged clone is the one refusal the flow goes on from: the night did all it could and only the pull
+  // waits, which is neither `ran` nor `failed` (`afterRefusal` is the rule, and it is not touched here).
+  const diverged = pull !== undefined && !pull.ok ? divergedOf(report.diverged, pull.refused) : undefined
   const supervisor = pull?.ok === true && pull.layers?.bin === true
   const restarted = report.projects.filter(
     (outcome) => outcome.result === 'restarted' || outcome.result === 'self',
@@ -1136,10 +1210,15 @@ export function nightReport(input: NightlyInput, at: string): NightlyResult {
     if (pull.install === 'failed') parts.push('install failed')
     lines.push(pullLine(pull))
   } else if (pull) {
-    parts.push(
-      `pull refused: ${pull.refused}${wentOn ? ' — restarted what is already here' : ' — nothing restarted'}`,
-    )
-    lines.push(pullLine(pull, wentOn))
+    if (diverged) {
+      // The morning's line is the notice itself: without it a night that did everything it could reads as a
+      // failure. It stays even when there is nothing to restart — the merge is the information — and the
+      // panel does not repeat it in the detail, which is the hosts.
+      parts.push(divergenceNotice(diverged))
+    } else {
+      parts.push(`pull refused: ${pull.refused} — nothing restarted`)
+      lines.push(pullLine(pull))
+    }
   }
   if (restarted.length)
     parts.push(
@@ -1156,12 +1235,13 @@ export function nightReport(input: NightlyInput, at: string): NightlyResult {
     lines.push(outcome.result === 'self' ? `${outcome.name} — restarted itself` : outcomeLine(outcome))
   const line = parts.length ? `Nightly update: ${parts.join(' · ')}` : undefined
   const installFailed = pull?.ok === true && pull.install === 'failed'
-  const wrong = (pull !== undefined && !pull.ok) || failed.length > 0 || installFailed
+  const wrong = (pull !== undefined && !pull.ok && !diverged) || failed.length > 0 || installFailed
   return {
-    outcome: wrong ? 'failed' : 'ran',
+    outcome: wrong ? 'failed' : diverged ? 'diverged' : 'ran',
     at,
     ...(line ? { line } : {}),
     ...(lines.length ? { lines } : {}),
+    ...(diverged ? { diverged } : {}),
     ...(supervisor ? { supervisor: true } : {}),
   }
 }
@@ -1169,6 +1249,17 @@ export function nightReport(input: NightlyInput, at: string): NightlyResult {
 /** A commit as the one line says it: seven characters, the way git prints it in a log. */
 function shortSha(sha: string): string {
   return sha.slice(0, 7)
+}
+
+/** The tick of the night's item: `error` is red, `warning` amber (it stepped aside, or it restarted and left
+ * the pull waiting for a merge), `calm` the quiet grey of a night that did its work. Pure, so the rail's
+ * colour is decided in one place instead of in the drawing. */
+export type NightTone = 'error' | 'warning' | 'calm'
+
+export function nightlyTone(outcome: NightlyResult['outcome']): NightTone {
+  if (outcome === 'failed') return 'error'
+  if (outcome === 'busy' || outcome === 'diverged') return 'warning'
+  return 'calm'
 }
 
 /**
@@ -1190,6 +1281,7 @@ export function nightlyView(
     outcome: result.outcome,
     line: result.line,
     lines: result.lines ?? [],
+    ...(result.diverged ? { diverged: result.diverged } : {}),
     ...(result.supervisor ? { supervisor: true } : {}),
   }
 }
