@@ -31,6 +31,22 @@
  * before, with the measurements and the buttons to bring up and stop — keeps being the project switcher,
  * and on the desktop it ceases to exist so that there are not two.
  *
+ * Every tile also has a **tone**, from its folder name alone (`colourOf`, copied from the app's own sidebar):
+ * a wash of a cool, muted hue that the initials sit on, one hue per family — `ultimate` and its siblings in
+ * brand —, so the same folder is the same colour on every machine and in every window. The tile keeps its
+ * letters: the state is the dot, the questions are the amber number, and the tone only says *which* project.
+ *
+ * A tile that is clicked is on its way somewhere: the target builds its web bundle first, so the click marks
+ * the tile (`opening…`) and runs a thin brand bar along the top of the window (`OpeningBar`, the `overlay`
+ * slot) until the next page paints — with no timer left running and no poll: the mark dies with the
+ * navigation, with the page the Back gesture brings back (`pageshow`), or, for a click that went nowhere, after
+ * a quarter of a minute.
+ *
+ * The foot of the rail sums the tiles in one short line — `1 for you · 2 working`, questions first — from the
+ * numbers the wave already brought, and disappears when both are zero. And the whole rail **steps aside** for
+ * another extension in `shell.rail`: two rails in one window is one too many, and the one somebody installed
+ * on purpose wins, so this one draws nothing and asks nothing.
+ *
  * No poll: the rail reads on opening, makes a wave of full reads on entering with the pointer (at most
  * once every 15 s), when the window regains the focus (the same ceiling), and again on the refresh button
  * and after each action — one call per reading, the rows and the numbers together. The dot of *this*
@@ -44,7 +60,9 @@ import {
   CircleArrowUpIcon,
   CopyIcon,
   EyeOffIcon,
+  GitBranchIcon,
   LoaderCircleIcon,
+  LockIcon,
   MoonIcon,
   PlayIcon,
   PlusIcon,
@@ -54,7 +72,7 @@ import {
   ToggleRightIcon,
   XIcon,
 } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, FormEvent, ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
@@ -68,12 +86,14 @@ import {
   formatTime,
   useAction,
   useCopy,
+  useExtensions,
   useNow,
   useRestart,
   useStore,
   useViewport,
 } from '@/sdk'
 import {
+  colourOf,
   workingCount,
   homeLabel,
   initials,
@@ -83,8 +103,11 @@ import {
   outcomeLine,
   pullLine,
   questionCount,
+  railTaken,
   readingWave,
+  repoLocked,
   stateWord,
+  sumLine,
   questions,
   canStop,
   portOf,
@@ -160,14 +183,115 @@ export default defineWebExtension({
     'shell.rail': Rail,
     // The list from before, which on the phone keeps being the project switcher.
     sidebar: { component: List, order: -10 },
+    // The thin bar that runs along the top of the window while a clicked tile is on its way.
+    overlay: OpeningBar,
   },
 })
 
+/**
+ * The tile that was clicked and the page it is going to. The rail cannot wait for a page that takes seconds to
+ * paint — the target builds its web bundle first —, so the click leaves a mark here: the tile pulses, the top
+ * edge of the window runs a thin brand bar. The mark dies with the navigation (a new page, a new module), with
+ * the page the Back gesture brings back (`pageshow`, from the back/forward cache), or, for a click that went
+ * nowhere, after `OPENING_EXPIRY_MS` — one deadline that is cleared by the next click, never a timer that keeps
+ * running.
+ */
+const OPENING_EXPIRY_MS = 15_000
+
+let opening: string | undefined
+const openingListeners = new Set<() => void>()
+let openingExpiry: ReturnType<typeof setTimeout> | undefined
+
+function setOpening(url: string | undefined) {
+  opening = url
+  clearTimeout(openingExpiry)
+  openingExpiry =
+    url === undefined ? undefined : setTimeout(() => setOpening(undefined), OPENING_EXPIRY_MS)
+  for (const listener of openingListeners) listener()
+}
+
+function subscribeOpening(listener: () => void) {
+  openingListeners.add(listener)
+  return () => {
+    openingListeners.delete(listener)
+  }
+}
+
+/** The page the rail is going to, if a tile was just clicked — `undefined` when nothing is on its way. */
+const useOpening = () => useSyncExternalStore(subscribeOpening, () => opening)
+
+if (typeof window !== 'undefined')
+  window.addEventListener('pageshow', () => setOpening(undefined))
+
+/** The thin brand bar along the top of the window, while a clicked tile is on its way to another project. */
+function OpeningBar() {
+  if (!useOpening()) return null
+  return (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none fixed inset-x-0 top-0 z-50 h-0.5 animate-sweep bg-brand/30 bg-size-[300%_100%] bg-no-repeat bg-[linear-gradient(90deg,transparent_30%,var(--color-brand)_50%,transparent_70%)]"
+      data-opening-bar
+    />
+  )
+}
+
+/**
+ * The colours of one tile, from its tone: the wash behind the initials (a light and a dark reading of the same
+ * tone, because the theme is a class and a script cannot read it), a stronger wash for this window's project,
+ * a quieter one for a stopped project, the ink of the letters, and the edge of the current one. The family's
+ * lightness offset moves the wash a little, so two projects of one family are two shades and not one.
+ *
+ * The numbers are the ones `colourOf` returned: a hue in degrees, a chroma of 0.06 (brand is 0.11), and a
+ * lightness offset from -0.17 to 0.15, which is scaled down here — a wash has a narrow range — while the
+ * letters take more of it. All of it is quiet on purpose: the presence dot and the amber count sit on top,
+ * and they are the ones that have to stand out.
+ */
+function toneStyle(name: string, family: readonly string[]): CSSProperties {
+  const { hue, chroma, lightness } = colourOf(name, family)
+  // The brand family's own chroma is nearly twice a project's, and at the lightness of a wash that reads as
+  // pink rather than as violet: a wash takes the quieter chroma, the letters and the edge keep the tone's own.
+  const washChroma = Math.min(chroma, 0.06)
+  const tone = (
+    base: number,
+    chromaValue: number,
+    scale: number,
+    lightnessScale: number,
+    alpha?: number,
+  ) =>
+    `oklch(${(base + lightness * lightnessScale).toFixed(3)} ${(chromaValue * scale).toFixed(3)} ${hue}${
+      alpha === undefined ? '' : ` / ${alpha}`
+    })`
+  const wash = (base: number, scale: number, lightnessScale = 0.3) =>
+    tone(base, washChroma, scale, lightnessScale)
+  return {
+    '--tile-wash': wash(0.91, 0.8),
+    '--tile-wash-dark': wash(0.25, 0.8),
+    '--tile-wash-hover': wash(0.88, 0.95),
+    '--tile-wash-hover-dark': wash(0.29, 0.95),
+    '--tile-wash-strong': wash(0.86, 1.05),
+    '--tile-wash-strong-dark': wash(0.31, 1.05),
+    '--tile-wash-idle': wash(0.94, 0.4, 0.15),
+    '--tile-wash-idle-dark': wash(0.2, 0.4, 0.15),
+    '--tile-ink': tone(0.4, chroma, 1.6, 0.2),
+    '--tile-ink-dark': tone(0.8, chroma, 1.3, 0.15),
+    '--tile-ink-strong': tone(0.34, chroma, 1.9, 0.2),
+    '--tile-ink-strong-dark': tone(0.87, chroma, 1.6, 0.1),
+    '--tile-edge': tone(0.42, chroma, 1.6, 0.2, 0.45),
+  } as CSSProperties
+}
+
 /** The rail — except on the phone, where there is no width for it and the sidebar's list is the
- * switcher. */
+ * switcher, and except when another extension fills the slot: then this one draws nothing and asks nothing,
+ * so a window never shows two rails. */
 function Rail() {
   const viewport = useViewport()
-  if (viewport === 'phone') return null
+  const taken = railTaken(
+    useExtensions().map((record) => ({
+      name: record.name,
+      rail: Boolean(record.extension?.slots?.['shell.rail']),
+    })),
+  )
+  if (taken || viewport === 'phone') return null
   return <Column />
 }
 
@@ -278,6 +402,20 @@ function Column() {
     }
   }
   const stale = failed ?? (shown ? undefined : error ? error.message : undefined)
+  // The foot of the rail sums what the tiles already brought: the questions without an answer in the whole
+  // machine first, then how many projects are working now. Nothing is asked for it — these are the wave's
+  // own numbers, and this window's dot is the live one — and both at zero is no line at all.
+  const askingAll = rows.reduce(
+    (total, project) => total + (measured(measurementOf(project)?.openQuestions) ?? 0),
+    0,
+  )
+  const workingAll = rows.filter(
+    (project) => (measured(measurementOf(project)?.working) ?? 0) > 0,
+  ).length
+  const sum = sumLine(askingAll, workingAll)
+  // The family the tones are taken from: the names of every row, so two projects of one stem take neighbouring
+  // shades in every window they are both in.
+  const family = rows.map((project) => project.name)
   // What the button at the foot of the rail promises: the clone as `list` read it (the shared clone, so any
   // reading does) and the hosts the wave saw running code the clone has moved past. Nothing is asked here:
   // the button appears from a reading the rail was going to make anyway.
@@ -307,6 +445,7 @@ function Column() {
           <>
             {running.map((project) => (
               <Tile
+                family={family}
                 key={project.home ?? project.root}
                 measurement={measurementOf(project)}
                 now={now}
@@ -320,6 +459,7 @@ function Column() {
             )}
             {stopped.map((project) => (
               <Tile
+                family={family}
                 key={project.home ?? project.root}
                 measurement={measurementOf(project)}
                 now={now}
@@ -342,6 +482,32 @@ function Column() {
         )}
       </div>
       <div className="flex shrink-0 flex-col items-center gap-1 pt-1">
+        {/* What the tiles add up to, when there is something to add up: the questions first, in the amber of
+            the corner counters, then the projects working, in the brand of the dot — the numbers the wave
+            brought, with the whole sentence in the `title`. */}
+        {sum && (
+          <div
+            aria-label={sum}
+            className="flex flex-col items-center gap-1 pb-0.5 font-mono text-[9.5px] leading-none tabular-nums"
+            data-projects-sum
+            role="group"
+            title={sum}
+          >
+            <span aria-hidden="true" className="h-px w-6 shrink-0 bg-foreground/20" />
+            {askingAll > 0 && (
+              <span className="flex items-center gap-1 text-amber-700 dark:text-amber-300">
+                <span className="size-1.5 rounded-full bg-amber-400" />
+                {askingAll}
+              </span>
+            )}
+            {workingAll > 0 && (
+              <span className="flex items-center gap-1 text-muted-foreground">
+                <span className="size-1.5 rounded-full bg-brand" />
+                {workingAll}
+              </span>
+            )}
+          </div>
+        )}
         {/* The last night, when it has something to say: one item, dismissed with a click, and gone from the
             rail until the next night writes another. */}
         {shown?.nightly && <Nightly nightly={shown.nightly} onChanged={refresh} />}
@@ -748,12 +914,15 @@ function SplashButton({
  */
 function Tile({
   project,
+  family,
   measurement,
   now,
   onChanged,
   onMeasured,
 }: {
   project: Project
+  /** Every project of the rail, by name: what one project's tone is shaded against (`colourOf`). */
+  family: readonly string[]
   /** The last measurement of the rail's wave, or the one this tile's panel made (the panel's wins). */
   measurement?: Measurement
   /** The clock the pulse is judged against: a reading older than the wave does not pulse. */
@@ -947,20 +1116,30 @@ function Tile({
   }
 
   const letters = initials(project.name)
+  // The tone of this project — its wash, its ink and the edge of the one this window shows. It is applied to
+  // the three shapes the tile takes (this window, a host, a stopped project) so a project looks the same
+  // wherever it is in the rail.
+  const tone = toneStyle(project.name, family)
+  // The page a click on this tile chose, when it is this tile that was clicked: the target builds its web
+  // bundle first, so the tile says so until the page paints, or the Back gesture brings this one back.
+  const goingTo = useOpening()
+  const openingThis = !project.current && link !== undefined && goingTo === link
   const look = cn(
     'relative flex size-8 items-center justify-center rounded-md border font-mono text-[10.5px] font-medium uppercase tabular-nums outline-none transition-colors focus-visible:ring-1 focus-visible:ring-ring',
     project.current
-      ? 'border-brand/40 bg-brand/10 text-brand'
+      ? 'border-[var(--tile-edge)] bg-[var(--tile-wash-strong)] text-[var(--tile-ink-strong)] dark:bg-[var(--tile-wash-strong-dark)] dark:text-[var(--tile-ink-strong-dark)]'
       : running
-        ? 'border-transparent bg-accent/70 text-foreground/85 hover:bg-accent'
-        : 'border-transparent text-muted-foreground/60 hover:bg-accent/40 hover:text-muted-foreground',
+        ? 'border-transparent bg-[var(--tile-wash)] text-[var(--tile-ink)] hover:bg-[var(--tile-wash-hover)] dark:bg-[var(--tile-wash-dark)] dark:text-[var(--tile-ink-dark)] dark:hover:bg-[var(--tile-wash-hover-dark)]'
+        : 'border-transparent bg-[var(--tile-wash-idle)] text-muted-foreground/60 hover:text-muted-foreground dark:bg-[var(--tile-wash-idle-dark)]',
+    openingThis && 'animate-pulse-dot',
     // An action that failed leaves its mark on the tile (the whole text is in the `title` and in the
     // panel): the click that did not work cannot vanish in silence.
     error && 'ring-1 ring-error/60',
   )
   // The `title` and the `aria-label` say the whole sentence — state, counts and the time of the
-  // measurement. An action's error beats the sentence: the click that failed cannot vanish.
-  const title = error ?? buttonTitle
+  // measurement. An action's error beats the sentence: the click that failed cannot vanish, and a click that
+  // is on its way says where it goes.
+  const title = error ?? (openingThis ? `opening ${project.name}…` : buttonTitle)
   const content = pending === 'start' ? <LoaderCircleIcon className="size-3.5 animate-spin" /> : letters
 
   return (
@@ -982,6 +1161,7 @@ function Tile({
           aria-label={title}
           className={look}
           onClick={openPanel}
+          style={tone}
           title={title}
           type="button"
         >
@@ -989,7 +1169,24 @@ function Tile({
           <Signals questionBadge={questionBadge} dot={dot} />
         </button>
       ) : running && link ? (
-        <a aria-label={title} className={look} href={link} title={title}>
+        <a
+          aria-label={title}
+          className={look}
+          href={link}
+          onClick={(event) => {
+            // The click that stays in this tab is the one that is going somewhere: a modifier or another
+            // button opens a new tab (or a window), and this page keeps the screen.
+            const elsewhere =
+              event.button !== 0 ||
+              event.metaKey ||
+              event.ctrlKey ||
+              event.shiftKey ||
+              event.altKey
+            if (!elsewhere) setOpening(link)
+          }}
+          style={tone}
+          title={title}
+        >
           {content}
           <Signals questionBadge={questionBadge} dot={dot} />
         </a>
@@ -1000,6 +1197,7 @@ function Tile({
           className={look}
           disabled={pending === 'start'}
           onClick={(event) => void start(event)}
+          style={tone}
           title={title}
           type="button"
         >
@@ -1031,9 +1229,39 @@ function Tile({
                   {homeLabel(project.home)}
                 </span>
               )}
+              {/* Where the project comes from: its `origin`, with the lock when it is private. Read in the
+                  background, once per process and root; a project that is not on GitHub, or whose repo and
+                  visibility could not be read, simply has no chip. */}
+              {project.repo && (
+                <span
+                  className="flex min-w-0 items-center gap-1 font-mono text-[10px] text-muted-foreground"
+                  data-project-repo={project.repo.name}
+                  title={`${project.repo.name} — ${project.repo.visibility}`}
+                >
+                  <GitBranchIcon aria-hidden="true" className="size-2.5 shrink-0 opacity-70" />
+                  <span className="truncate">{project.repo.name}</span>
+                  {repoLocked(project.repo) && (
+                    <LockIcon
+                      aria-label={project.repo.visibility}
+                      className="size-2.5 shrink-0"
+                      role="img"
+                    />
+                  )}
+                </span>
+              )}
             </div>
             <div className="flex items-baseline gap-1.5 font-mono text-[10.5px]">
-              <span className={running ? 'text-success' : 'text-muted-foreground/70'}>{state}</span>
+              <span
+                className={
+                  openingThis
+                    ? 'text-brand'
+                    : running
+                      ? 'text-success'
+                      : 'text-muted-foreground/70'
+                }
+              >
+                {openingThis ? 'opening…' : state}
+              </span>
               {port && (
                 <>
                   <span aria-hidden="true" className="text-muted-foreground/40">
@@ -1495,6 +1723,7 @@ function PhoneList() {
         ) : (
           data?.projects.map((project) => (
             <Row
+              family={data.projects.map((item) => item.name)}
               key={project.home ?? project.root}
               onChanged={refresh}
               project={project}
@@ -1511,7 +1740,16 @@ function PhoneList() {
  * (link to the same tab) with the measurement, or the command to copy when the host is stopped. The button
  * at the end brings the stopped project up and brings down the one that is up.
  */
-function Row({ project, onChanged }: { project: Project; onChanged: () => Promise<unknown> }) {
+function Row({
+  project,
+  family,
+  onChanged,
+}: {
+  project: Project
+  /** The names of every project of the machine, for the tone of this row's name. */
+  family: readonly string[]
+  onChanged: () => Promise<unknown>
+}) {
   const { copied, copy } = useCopy()
   const [pending, setPending] = useState<'start' | 'stop'>()
   const [confirm, setConfirm] = useState<{ pid: number; url?: string }>()
@@ -1526,6 +1764,8 @@ function Row({ project, onChanged }: { project: Project; onChanged: () => Promis
   const port = portOf(project.running?.url)
   const copyable = project.command
   const path = project.current ? `${project.root} — this window` : project.root
+  // The tone of this project: on the phone the name itself takes it, there being no tile to wash.
+  const tone = toneStyle(project.name, family)
   const state =
     pending === 'start' ? 'starting' : pending === 'stop' ? 'stopping' : stateWord(project)
 
@@ -1593,6 +1833,7 @@ function Row({ project, onChanged }: { project: Project; onChanged: () => Promis
       className="group/project mx-2 flex min-w-0 flex-col gap-px rounded-md py-1 pr-2 pl-2.5"
       data-current={project.current ? '' : undefined}
       data-project={project.name}
+      style={tone}
     >
       <div className="flex min-w-0 items-center gap-2" title={path}>
         <span
@@ -1606,7 +1847,9 @@ function Row({ project, onChanged }: { project: Project; onChanged: () => Promis
         <span
           className={cn(
             'min-w-0 flex-1 truncate text-[12.5px]',
-            project.current ? 'text-brand' : 'text-foreground/85',
+            project.current
+              ? 'text-[var(--tile-ink-strong)] dark:text-[var(--tile-ink-strong-dark)]'
+              : 'text-[var(--tile-ink)] dark:text-[var(--tile-ink-dark)]',
           )}
         >
           {project.name}

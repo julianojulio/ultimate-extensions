@@ -1,11 +1,11 @@
 # projects — a rail of projects
 
 A column on the left edge of the window, one tile per project: running hosts on top, stopped ones
-below, each with a presence dot and the number of unanswered questions. One click opens a project or
-brings it up. When the clone Ultimate runs from has moved — or a host of this machine is still running
-the code from before it did — a button at the foot of the rail updates the clone once and restarts every
-host that needs it, and the same thing can happen by itself once a night, when no conversation is
-working.
+below, each with a colour of its own, a presence dot and the number of unanswered questions. One click
+opens a project or brings it up. When the clone Ultimate runs from has moved — or a host of this machine
+is still running the code from before it did — a button at the foot of the rail updates the clone once
+and restarts every host that needs it, and the same thing can happen by itself once a night, when no
+conversation is working.
 
 ![The rail on the left edge](screenshots/rail.png)
 
@@ -21,6 +21,13 @@ then the other running ones, a thin line, then the stopped ones — and inside e
 is what makes going back easy: switch to another project to capture something, come back, and the project
 you left is right below this one.
 
+Each tile takes a **tone** from its folder name alone: a muted, cool wash behind the letters, the same
+colour on every machine and in every window, with the family of Ultimate itself in brand. Nothing else is
+warm (amber counts questions, red is an error) and nothing else is violet. The tone says *which* project,
+the letters stay legible, and the dot and the number still say the rest. The rule is the app's own: it is
+copied from `extensions/sidebar/tile.tsx` of the Ultimate clone (see `colourOf` in `projects.ts`), so a
+project has one colour in both rails.
+
 The order is the machine's, not a window's — every window of every project reads the same stamps
 (`~/.ultimate/projects-shown.json`, below), so they all agree on what came before. A project this machine
 has no stamp for is placed by when it opened, and two with neither are ordered by name. The price of
@@ -31,16 +38,34 @@ The dot in the corner is the project's state: grey stopped, green up and idle, p
 reading saw it working, hollow when the host does not answer. The number in the corner is the count of
 questions without an answer (`9+` from ten up), in amber.
 
-A tile is one click: a running project opens in this tab, a stopped one is brought up.
+A tile is one click: a running project opens in this tab, a stopped one is brought up. A click that goes
+to another project **says it is on its way**: the tile pulses, its `title` and the panel say `opening…`,
+and a thin brand bar runs along the top of the window until the next page paints — the target builds its
+web bundle first, which takes a few seconds. Nothing keeps running for it: the mark goes with the
+navigation, with the page the Back gesture brings back, or, for a click that went nowhere, after fifteen
+seconds.
 
-Hovering or focusing a tile opens its panel after a moment, with what the tile does not fit: the port,
-the state in words, how many conversations are working and how many questions wait, the command to
-copy, the stop button and, on a stopped project, `forget…`. Those numbers are measured when the panel
-opens, with the time of the reading.
+Hovering or focusing a tile opens its panel after a moment, with what the tile does not fit: the project's
+repo (`owner/repo` from its `origin`, with a lock when it is private), the port, the state in words, how
+many conversations are working and how many questions wait, the command to copy, the stop button and, on a
+stopped project, `forget…`. The numbers are measured when the panel opens, with the time of the reading.
+The repo is read in the background, once per process and folder (`git remote get-url origin`, then one `gh
+repo view` for the visibility): a project that is not on GitHub, one with no `origin`, and one whose
+visibility `gh` could not answer simply have no chip, rather than a guessed one.
 
 ![The tile panel](screenshots/panel.png)
 
-On the phone there is no rail: the same list, compact, stays in the sidebar.
+The foot of the rail **sums the tiles**, from the numbers the wave already brought — nothing is asked for
+it: `1 for you · 2 working`, questions first, and no line at all when both are zero. In the 48px column it
+is drawn as two small lines, the amber questions above the brand working ones, each with the whole
+sentence in its `title`.
+
+The rail also **steps aside for another one**: if any other extension fills `shell.rail` — a fleet
+switcher of your own, say — this extension draws nothing and asks nothing, so a window never shows two
+rails. The phone's list is in the sidebar slot and is not affected.
+
+On the phone there is no rail: the same list, compact, stays in the sidebar, and each project's name takes
+its tone.
 
 ## Using it
 
@@ -310,8 +335,11 @@ restarts every window of the machine — behind the screen.
 - It does not delete anything: a forgotten project is hidden from this rail, and its home — with the
   conversations — stays where it was.
 - It does not kill a host it did not start without asking.
-- It does not run `git` or `pnpm` itself, and it never pushes: the update button asks Ultimate's update,
-  which refuses a dirty, switched or diverged clone instead of resolving it.
+- It does not run `git` or `pnpm` to change anything, and it never pushes: the update button asks Ultimate's
+  update, which refuses a dirty, switched or diverged clone instead of resolving it. The only programs it
+  runs are the two that name a project's repo, `git remote get-url origin` and `gh repo view`, read-only and
+  in the background.
+- It does not draw a second rail: another extension in `shell.rail` wins, and this one draws nothing.
 - It does not restart the window that clicked it directly: that window asks the core to swap itself.
 - It does not restart the supervisor: when the nightly update's pull touches `bin/`, the line of the morning
   says so and waits for a host to be stopped and started by hand.

@@ -10,7 +10,10 @@
  *
  * The state is never the colour alone: the rail writes `running`/`stopped` in each tile's panel, the
  * group is the position (running above the line, stopped below) and what was measured comes as a
- * number, with the time.
+ * number, with the time. The tone of a tile is one more way of telling projects apart, and it comes from
+ * the folder name alone (copied from the app's own sidebar, with attribution where it lives); the foot of
+ * the rail sums the tiles' two numbers in one line, and another extension in `shell.rail` outranks this
+ * one entirely.
  *
  * The order is the machine's, not the window's: a page load stamps its project, and every rail of this
  * machine puts the most recently shown one on top — the project you came from is the second tile.
@@ -26,6 +29,7 @@ import type {
   NightlyView,
   Project,
   PullResult,
+  Repo,
   RestartOutcome,
   Section,
   UpdateReport,
@@ -151,6 +155,82 @@ export function questionsTitle(openQuestions: number | null | undefined, reason?
 }
 
 /**
+ * The foot of the rail in one line, when there is something to sum: `1 for you · 2 working`. Questions come
+ * first, because on every tile they outrank the work; only the half that is not zero is written, and both at
+ * zero is no line at all — the foot disappears rather than saying `0 for you · 0 working`. What was not
+ * measured is not a zero either: an absent count adds nothing and does not hide the other one.
+ */
+export function sumLine(
+  openQuestions: number | null | undefined,
+  working: number | null | undefined,
+): string | undefined {
+  const asking = measured(openQuestions) ?? 0
+  const busy = measured(working) ?? 0
+  const parts = [
+    asking > 0 ? `${asking} for you` : undefined,
+    busy > 0 ? `${busy} working` : undefined,
+  ].filter((part): part is string => part !== undefined)
+  return parts.length > 0 ? parts.join(' · ') : undefined
+}
+
+/**
+ * The GitHub repo a `remote get-url` names, as `owner/repo` and as GitHub spells it — or nothing, when the
+ * remote is not GitHub's. The three shapes git writes are read: `https://github.com/owner/repo(.git)`,
+ * `ssh://git@github.com/owner/repo(.git)` and the scp-like `git@github.com:owner/repo(.git)`. A remote that
+ * carries a token in its user name (`https://x-access-token:…@github.com/owner/repo`) yields the same
+ * `owner/repo`: the credential is parsed past, and never kept, logged or handed to the screen.
+ */
+export function repoSlug(remote: string | undefined): string | undefined {
+  if (!remote) return undefined
+  const text = remote.trim()
+  const scp = /^[^@/\s]+@github\.com:(.+)$/i.exec(text)
+  let path: string
+  if (scp) path = scp[1]
+  else {
+    let parsed: URL
+    try {
+      parsed = new URL(text)
+    } catch {
+      return undefined
+    }
+    if (parsed.hostname.toLowerCase() !== 'github.com') return undefined
+    path = parsed.pathname
+  }
+  const parts = path
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '')
+    .replace(/\.git$/i, '')
+    .split('/')
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return undefined
+  return `${parts[0]}/${parts[1]}`
+}
+
+/**
+ * What `gh repo view --json visibility` answered (`{"visibility":"PRIVATE"}`), in any case — or nothing,
+ * which is the case that matters: the chip is drawn only with a visibility that was really read, because the
+ * lock is half of what it says, and a chip without one would claim a public repo nobody checked.
+ */
+export function repoVisibility(value: unknown): Repo['visibility'] | undefined {
+  if (typeof value !== 'string') return undefined
+  let parsed: { visibility?: unknown }
+  try {
+    parsed = JSON.parse(value) as { visibility?: unknown }
+  } catch {
+    return undefined
+  }
+  const visibility =
+    typeof parsed.visibility === 'string' ? parsed.visibility.toLowerCase() : undefined
+  return visibility === 'public' || visibility === 'private' || visibility === 'internal'
+    ? visibility
+    : undefined
+}
+
+/** Whether the chip carries a lock: a private repo, and an internal one, private to its enterprise. */
+export function repoLocked(repo: Repo): boolean {
+  return repo.visibility !== 'public'
+}
+
+/**
  * The click target of a tile: the host's URL, with the port, where the browser goes. The number enters
  * no label (`initials` has letters only): it is an address, not on-screen information.
  */
@@ -170,6 +250,96 @@ export function initials(name: string): string {
       ? parts.slice(0, 2).map((part) => Array.from(part)[0])
       : Array.from(parts.join('')).slice(0, 2)
   return letters.join('').toUpperCase()
+}
+
+/**
+ * The three numbers that make a project's tone, in the OKLCH the app draws in: the hue in degrees, the
+ * chroma (0 is grey) and a lightness offset the shades of one family take on top of the tile's own.
+ */
+export interface Tone {
+  hue: number
+  chroma: number
+  lightness: number
+}
+
+const UNRESERVED_COOL_HUES = [145, 162, 179, 196, 213, 230, 247]
+const ULTIMATE_BRAND_COLOUR = { hue: 300, chroma: 0.11 }
+const PROJECT_CHROMA = 0.06
+const SIBLING_LIGHTNESS_AND_HUE_OFFSETS = [
+  { lightnessOffset: 0, hueOffset: 0 },
+  { lightnessOffset: -0.1, hueOffset: 8 },
+  { lightnessOffset: 0.09, hueOffset: -8 },
+  { lightnessOffset: -0.17, hueOffset: 14 },
+  { lightnessOffset: 0.15, hueOffset: -14 },
+]
+
+const hash = (text: string) => {
+  let value = 0
+  for (const char of text) value = (value * 31 + char.codePointAt(0)!) >>> 0
+  return value
+}
+
+/** The part of a folder name that families share: `ultimate-fixes` and `ultimate_eval` → `ultimate`. */
+export const stemOf = (name: string) => name.toLowerCase().split(/[-_.\s]+/)[0] ?? ''
+
+/**
+ * The tone of a tile, from the folder name alone — and, given the family, the shades that keep one family
+ * apart.
+ *
+ * **Copied from `extensions/sidebar/tile.tsx` in the Ultimate clone**, because a machine extension may import
+ * `@/sdk` and another extension's `ui.tsx` and nothing else, and `tile.tsx` is neither: the app's own rule is
+ * restated here rather than imported. The rule, kept word for word: the hue comes from the name's **stem**, so
+ * `ultimate`, `ultimate-fixes` and a branch checkout of one project are neighbours of one hue, and the same
+ * folder has the same tone on every machine; the family of Ultimate itself is brand; every other project takes
+ * a muted, cool hue — no warm hue, because amber is the question counter and red is an error, and no violet,
+ * which stays Ultimate's. Siblings of one stem take neighbouring shades, sorted by name, so three tiles of one
+ * family agree in every window.
+ *
+ * The right fix is the SDK exporting this one function — a small change in the clone; until then the copy is
+ * deliberate and attributed, and the two have to change together.
+ */
+export function colourOf(name: string, family: readonly string[] = []): Tone {
+  const key = name.toLowerCase()
+  const stem = stemOf(key)
+  const siblings = [...new Set(family.map((item) => item.toLowerCase()))]
+    .filter((item) => item !== stem && stemOf(item) === stem)
+    .toSorted()
+  const place = siblings.indexOf(key)
+  const shade =
+    SIBLING_LIGHTNESS_AND_HUE_OFFSETS[
+      key === stem
+        ? 0
+        : 1 +
+          ((place >= 0 ? place : hash(key.slice(stem.length))) %
+            (SIBLING_LIGHTNESS_AND_HUE_OFFSETS.length - 1))
+    ]
+  const brand = stem === 'ultimate'
+  return {
+    hue:
+      (brand
+        ? ULTIMATE_BRAND_COLOUR.hue
+        : UNRESERVED_COOL_HUES[hash(stem) % UNRESERVED_COOL_HUES.length]) + shade.hueOffset,
+    chroma: brand ? ULTIMATE_BRAND_COLOUR.chroma : PROJECT_CHROMA,
+    lightness: shade.lightnessOffset,
+  }
+}
+
+/**
+ * One installed web extension, as far as the question of who fills the rail needs it: its name, and whether it
+ * contributes a component to `shell.rail`.
+ */
+export interface RailFiller {
+  name: string
+  rail: boolean
+}
+
+/**
+ * Whether another extension fills `shell.rail`: then this one draws nothing at all and asks nothing — a window
+ * with two rails is one too many, and the one somebody installed on purpose wins. The name of this extension
+ * (`self`) is not a second rail.
+ */
+export function railTaken(fillers: readonly RailFiller[], self = 'projects'): boolean {
+  return fillers.some((filler) => filler.name !== self && filler.rail)
 }
 
 /** The rail split by what it shows: the running hosts on top, the stopped ones below. */

@@ -48,7 +48,8 @@
  * callable).
  *
  * The `update` action is the button at the foot of the rail: it pulls the shared clone once through the
- * `update` extension's own action — this extension never runs git, pnpm or the clone's lock — and then
+ * `update` extension's own action — this extension never runs git, pnpm or the clone's lock for anything that
+ * *changes* the machine — and then
  * restarts, one at a time, every host of the machine that answered that the clone has moved past it. A
  * refused pull stops the click, except when the clone has **diverged**: that one is clean and committed and
  * only lacks the fast-forward, so the restarts go on onto the code already on disk. The current process is
@@ -85,6 +86,11 @@
  * **Nothing is deleted**, except those records of past nights: forgetting a project only adds its home to a
  * list.
  *
+ * The one thing this extension asks a program is where a project came from: one `git remote get-url origin`
+ * and one `gh repo view --json visibility` per root, when the root is first listed, so the tile's panel can
+ * name the repo and say whether it is private (`readRepo`). Both are read-only, bounded, kept for the process
+ * and silent when they fail; neither carries a credential to the screen or to a log.
+ *
  * ## The night
  *
  * `projects.update.at` (`HH:MM`, local time) is read on the spot, never kept: absent, nothing is armed; a
@@ -107,7 +113,7 @@
  * host asks the harness for the core swap itself, after the record is written. A pull that touched `bin/`
  * cannot be applied by a swap at all, and the report says so rather than pretending.
  */
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { closeSync, openSync } from 'node:fs'
@@ -126,6 +132,7 @@ import {
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
+import { promisify } from 'node:util'
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
 import type { JsonValue } from '@earendil-works/chord'
 import { defineExtension } from '@earendil-works/pi-durable'
@@ -167,6 +174,8 @@ import {
   hostOrigin,
   lockPort,
   projectHome,
+  repoSlug,
+  repoVisibility,
   startProgram,
   uniqueByRoot,
   userSettings,
@@ -184,6 +193,7 @@ import type {
   CreateResult,
   ForgetResult,
   PullResult,
+  Repo,
   RestartOutcome,
   Shown,
   Seen,
@@ -470,6 +480,72 @@ async function localState(ctx: Context): Promise<State> {
 }
 
 /**
+ * Where the panel's repo chip comes from: `git remote get-url origin`, then one `gh repo view --json
+ * visibility`. Both are bounded and both fail silently — no `gh`, no network, no `origin`, another forge, a
+ * token that expired: the project simply has no chip, which says nothing about the project. No credential is
+ * read or passed on, no output reaches a log, and why a read failed stays here: it would only be noise in the
+ * panel. `gh` is asked for the visibility and nothing else, and a chip is drawn only with both halves — the
+ * name and how private it is —, never with a guessed lock.
+ *
+ * The answer is kept for the process, per root: a hit, and a "there is nothing there". A reading never waits
+ * on it — `list` looks the root up, starts the read the first time it sees one, and returns what it already
+ * knows. This is the one place in the extension that runs a program, and it only asks.
+ */
+const REPO_WAIT = 4_000
+
+const repos = new Map<string, Repo | null>()
+const repoReads = new Set<string>()
+
+const run = promisify(execFile) as (
+  file: string,
+  args: readonly string[],
+  options: { timeout: number; maxBuffer: number; env: NodeJS.ProcessEnv },
+) => Promise<{ stdout: string; stderr: string }>
+
+/** What a program said, or nothing: a program that must not prompt, and whose refusal nobody reads. */
+async function say(program: string, args: readonly string[]): Promise<string | undefined> {
+  try {
+    const { stdout } = await run(program, args, {
+      timeout: REPO_WAIT,
+      maxBuffer: 64 * 1024,
+      env: {
+        ...process.env,
+        // Nothing to prompt for, no update notice, and no colour codes to strip.
+        GH_PROMPT_DISABLED: '1',
+        GH_NO_UPDATE_NOTIFIER: '1',
+        NO_COLOR: '1',
+        GIT_TERMINAL_PROMPT: '0',
+      },
+    })
+    return stdout
+  } catch {
+    return undefined
+  }
+}
+
+async function readRepo(root: string): Promise<Repo | null> {
+  const name = repoSlug(await say('git', ['-C', root, 'remote', 'get-url', 'origin']))
+  if (!name) return null
+  const visibility = repoVisibility(
+    await say('gh', ['repo', 'view', name, '--json', 'visibility']),
+  )
+  return visibility ? { name, visibility } : null
+}
+
+/** The repo known for that root — and, the first time the root is seen, the read that will know it. */
+function cachedRepo(root: string | undefined): Repo | undefined {
+  if (!root) return undefined
+  if (!repos.has(root) && !repoReads.has(root)) {
+    repoReads.add(root)
+    void readRepo(root)
+      .then((repo) => repos.set(root, repo))
+      .catch(() => repos.set(root, null))
+      .finally(() => repoReads.delete(root))
+  }
+  return repos.get(root) ?? undefined
+}
+
+/**
  * A row of the section from what was measured: it never invents a number that did not come, and it never
  * hands the screen an address that did not pass `hostOrigin` — not to fetch, not to link.
  */
@@ -482,11 +558,13 @@ function toRow(
   const cmd = command(project.root)
   const origin = project.running ? hostOrigin(project.running.url) : undefined
   const reason = measurements?.reason ?? (project.running && !origin ? REFUSED_LOCK : undefined)
+  const repo = cachedRepo(project.root)
   return {
     name: project.name,
     root: project.root ?? '',
     home: project.home,
     current: project.current,
+    ...(repo ? { repo } : {}),
     ...(shownAt === undefined ? {} : { shownAt }),
     ...(typeof project.openedAt === 'number' ? { openedAt: project.openedAt } : {}),
     ...(project.running && origin ? { running: { pid: project.running.pid, url: origin } } : {}),

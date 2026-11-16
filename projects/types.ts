@@ -3,6 +3,18 @@
  * on the spot and the screen only shows what came.
  */
 
+/**
+ * A project's repository on GitHub, as the tile's panel names it: `owner/repo` and how private it is. Read in
+ * the background (`git`, then one `gh repo view`), once per process and root, and absent until that read came —
+ * which draws no chip at all. There is no token here, and nothing of a credential.
+ */
+export interface Repo {
+  /** `owner/repo`, as GitHub spells it. */
+  name: string
+  /** What `gh` answered about it: the chip draws a lock for a private repo, and for an internal one. */
+  visibility: 'public' | 'private' | 'internal'
+}
+
 /** A project of the machine, as the rail shows it. */
 export interface Project {
   name: string
@@ -53,6 +65,12 @@ export interface Project {
    * started): a restart loads it. `undefined` when nobody asked — the cheap read of the rail never does.
    */
   restart?: boolean
+  /**
+   * The repo of this project's `origin`, once it is known: the panel's chip. Absent off GitHub, when `gh`
+   * could not say how private it is, and until the first background read finished — and then the panel shows
+   * no chip rather than a guessed one.
+   */
+  repo?: Repo
   /**
    * `ultimate <path>`, the command that brings the project up by hand. Shown and copied, never
    * executed.

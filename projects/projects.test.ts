@@ -39,6 +39,15 @@
  *   refused instead of becoming some folder at random;
  * - the home of a new project is the same one Ultimate calculates
  *   (`<home>/.ultimate/projects/<name>-<8>`).
+ * - the tone of a tile comes from the folder name alone (`colourOf`, copied from the app's sidebar): the same
+ *   folder is the same colour everywhere, a family takes neighbouring shades of one hue, Ultimate's own family
+ *   is brand, nothing is warm and nothing but the brand is violet — and two projects whose initials collide are
+ *   still two tones;
+ * - the foot of the rail sums the tiles in one line (`1 for you · 2 working`), questions first, only what is
+ *   not zero;
+ * - another extension in `shell.rail` wins, so a window never shows two rails;
+ * - the panel's repo chip is read from `origin` and drawn only with a visibility that `gh` really answered,
+ *   with a lock for what is not public.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
@@ -48,6 +57,7 @@ import {
   startArgs,
   absolutePath,
   command,
+  colourOf,
   hiddenHomes,
   homeKey,
   isHidden,
@@ -64,7 +74,11 @@ import {
   linkOf,
   measured,
   questionCount,
+  railTaken,
   readingWave,
+  repoLocked,
+  repoSlug,
+  repoVisibility,
   stateWord,
   questions,
   canStop,
@@ -75,7 +89,9 @@ import {
   lockPort,
   presence,
   startProgram,
+  stemOf,
   splashLabel,
+  sumLine,
   uniqueByRoot,
   userSettings,
   splashEnabled,
@@ -1580,4 +1596,129 @@ test('the machine is idle only when every host that answered says nothing is wor
   assert.deepEqual(workingNames([{ name: 'web', working: 0 }, { name: 'cli', working: null }]), [])
   // A host that did not answer is not a working one: its silence is not a reason to skip the night.
   assert.deepEqual(workingNames([{ name: 'cli', working: null }]), [])
+})
+
+test('the tone of a tile comes from the folder name alone, and stays cool', () => {
+  // Same folder, same tone — on this machine, in another window, on another machine: nothing else enters it.
+  assert.deepEqual(colourOf('billing-app'), colourOf('billing-app'))
+  // The case of a name is not a second project.
+  assert.deepEqual(colourOf('Billing-App'), colourOf('billing-app'))
+  assert.equal(stemOf('billing-app'), 'billing')
+  assert.equal(stemOf('ultimate_fixes'), 'ultimate')
+  // Two names, two tones: the hue belongs to the name, it is not dealt out in turn.
+  assert.notEqual(colourOf('servidor').hue, colourOf('assistente').hue)
+  // Cool only: no warm hue (amber counts questions, red is an error) and no violet, which stays Ultimate's.
+  for (const name of [
+    'servidor',
+    'assistente',
+    'billing-app',
+    'neon-api',
+    'notes',
+    'website',
+    'robsoncosta',
+    'discord-llm-bot',
+    'gta2xlwifi-lineage',
+  ]) {
+    const { hue, chroma } = colourOf(name)
+    assert.ok(hue >= 130 && hue <= 265, `${name} is cool (${hue})`)
+    assert.equal(chroma, 0.06, `${name} is muted (${chroma})`)
+  }
+})
+
+test('a family takes neighbouring shades of one hue, and Ultimate’s own family is brand', () => {
+  const family = ['ultimate', 'ultimate-extensions', 'ultimate-fixes']
+  const brand = family.map((name) => colourOf(name, family))
+  // Brand violet, quieter siblings around it, each its own shade.
+  assert.deepEqual(
+    brand.map((tone) => tone.chroma),
+    [0.11, 0.11, 0.11],
+  )
+  assert.deepEqual(
+    brand.map((tone) => tone.hue).toSorted((a, b) => a - b),
+    [292, 300, 308],
+  )
+  assert.equal(new Set(brand.map((tone) => tone.lightness)).size, 3)
+  // Outside a family, a name of Ultimate's is still brand; a project with no siblings keeps the stem's base.
+  assert.equal(colourOf('ultimate').hue, 300)
+  assert.equal(colourOf('ultimate-fixes').chroma, 0.11)
+  // Another family: the stem's own hue, taken apart by the shade — not a second hue.
+  const web = ['neon-api', 'neon-web']
+  const [api, site] = web.map((name) => colourOf(name, web))
+  const base = colourOf('neon')
+  assert.ok(Math.abs(api.hue - base.hue) <= 14, `${api.hue} is a neighbour of ${base.hue}`)
+  assert.ok(Math.abs(site.hue - base.hue) <= 14, `${site.hue} is a neighbour of ${base.hue}`)
+  assert.notDeepEqual(api, site)
+  // A name's shade depends on the family it is seen in: on its own, `neon-api` takes the shade its suffix
+  // hashes to, which is what the family replaces with a place among its siblings.
+  assert.notDeepEqual(colourOf('neon-api'), api)
+})
+
+test('two projects whose initials collide still get their own tone', () => {
+  // `api-core` and `app-config` are both `AC` on the rail: the tile's letters cannot tell them apart, the
+  // tone can.
+  assert.equal(initials('api-core'), initials('app-config'))
+  assert.equal(initials('api-core'), 'AC')
+  assert.notEqual(colourOf('api-core').hue, colourOf('app-config').hue)
+})
+
+test('the foot of the rail sums the tiles in one line, and only what is not zero', () => {
+  // Nothing to sum is no line at all.
+  assert.equal(sumLine(0, 0), undefined)
+  // One half alone says only itself, with the right singular and plural.
+  assert.equal(sumLine(1, 0), '1 for you')
+  assert.equal(sumLine(3, 0), '3 for you')
+  assert.equal(sumLine(0, 2), '2 working')
+  // Both: questions first, because on every tile they outrank the work.
+  assert.equal(sumLine(1, 2), '1 for you · 2 working')
+  assert.equal(sumLine(9, 4), '9 for you · 4 working')
+  // What was not measured is not a zero: it adds nothing and hides nothing.
+  assert.equal(sumLine(null, 3), '3 working')
+  assert.equal(sumLine(2, null), '2 for you')
+  assert.equal(sumLine(undefined, undefined), undefined)
+})
+
+test('another extension in the rail wins, and this extension’s own contribution is not another one', () => {
+  assert.equal(railTaken([]), false)
+  // The rail of this extension alone is not a reason to step aside.
+  assert.equal(railTaken([{ name: 'projects', rail: true }]), false)
+  assert.equal(railTaken([{ name: 'projects', rail: true }, { name: 'sounds', rail: false }]), false)
+  // Any other extension with a component in `shell.rail` takes it.
+  assert.equal(railTaken([{ name: 'fleet', rail: true }]), true)
+  assert.equal(railTaken([{ name: 'projects', rail: true }, { name: 'fleet', rail: true }]), true)
+  // Another extension that only fills the sidebar is not a rail.
+  assert.equal(railTaken([{ name: 'fleet', rail: false }]), false)
+})
+
+test('the repo of a project is read from its origin, and only GitHub is one', () => {
+  assert.equal(repoSlug('git@github.com:julianojulio/ultimate-extensions.git'), 'julianojulio/ultimate-extensions')
+  assert.equal(repoSlug('https://github.com/owner/repo.git'), 'owner/repo')
+  assert.equal(repoSlug('https://github.com/owner/repo/'), 'owner/repo')
+  assert.equal(repoSlug('ssh://git@github.com/owner/repo.git'), 'owner/repo')
+  // GitHub keeps the case of a name; the host is the host.
+  assert.equal(repoSlug('https://github.com/Owner/Repo.git'), 'Owner/Repo')
+  // A token in the remote is parsed past: the chip is `owner/repo`, and nothing of the credential is kept.
+  assert.equal(repoSlug('https://x-access-token:ghp_secret@github.com/owner/repo'), 'owner/repo')
+  // Another forge, a folder, a sub-page and an empty remote are no chip at all.
+  for (const remote of [
+    'https://gitlab.com/owner/repo',
+    'https://github.com/owner',
+    'https://github.com/owner/repo/tree/main',
+    'git@example.com:owner/repo.git',
+    '/home/u/src/repo',
+    '',
+    undefined,
+  ])
+    assert.equal(repoSlug(remote), undefined, `${remote} is no GitHub repo`)
+})
+
+test('the chip is drawn only with a visibility that was really read, and locks what is not public', () => {
+  assert.equal(repoVisibility('{"visibility":"PRIVATE"}'), 'private')
+  assert.equal(repoVisibility('{"visibility":"public"}'), 'public')
+  assert.equal(repoVisibility('{"visibility":"INTERNAL"}'), 'internal')
+  // No answer is no chip: the lock is half of what the chip says, and a guessed one claims a public repo.
+  for (const answer of ['{}', 'nope', '', '{"visibility":"secret"}', undefined, 4])
+    assert.equal(repoVisibility(answer), undefined, `${String(answer)} is no visibility`)
+  assert.equal(repoLocked({ name: 'owner/repo', visibility: 'private' }), true)
+  assert.equal(repoLocked({ name: 'owner/repo', visibility: 'internal' }), true)
+  assert.equal(repoLocked({ name: 'owner/repo', visibility: 'public' }), false)
 })
