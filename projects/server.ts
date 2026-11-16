@@ -1375,7 +1375,7 @@ async function armNightly(ctx: Context, state: NightlyState): Promise<void> {
     // A timer that keeps the process alive is not the point: the host serves, the night waits.
     state.timer.unref()
   }
-  if (retry.kind === 'run') return runNightly(ctx, state, 'retry')
+  if (retry.kind === 'run') return next(0, 'retry')
   if (retry.kind === 'wait') return next(retry.delayMs, 'retry')
   const plan = nightPlan(now, at, record?.day)
   if (plan.kind === 'run') {
@@ -1383,7 +1383,11 @@ async function armNightly(ctx: Context, state: NightlyState): Promise<void> {
     // and "run now" would come straight back: one minute between attempts, never a hot loop.
     const since = state.attemptedAt === undefined ? Infinity : now.getTime() - state.attemptedAt
     if (since < NIGHTLY_FLOOR) return next(NIGHTLY_FLOOR - since, 'due')
-    return runNightly(ctx, state, 'due')
+    // A run is **scheduled**, never awaited here: the harness-open callback is awaited by the core before it
+    // serves the API and resumes the harness, and a night that pulls the clone and installs packages must not
+    // hold the window of the user who opened the app in the morning. The timer is `unref`'d and the run reads
+    // the settings and the record again, so nothing depends on what was true when it was armed.
+    return next(0, 'due')
   }
   next(plan.delayMs, 'due')
 }
@@ -1439,8 +1443,11 @@ async function runNightly(
       record = claim
     } else {
       const existing = await readNightly(day)
-      // The retry belongs to the host that took the turn, and to today's record only.
+      // The retry belongs to the host that took the turn, and to today's record only — and it is still owed
+      // only while the record says so: the same three conditions `retryPlan` decided on, read again, because
+      // a timer can fire on a record that moved on (or a reload left an older timer behind).
       if (!existing || existing.by !== ctx.host.home) return
+      if (retryPlan(existing, ctx.host.home, Date.now()).kind !== 'run') return
       const { retryAt: _retry, ...rest } = existing
       record = { ...rest, attempts: 2 }
       await writeJsonAtomic(path, record)
@@ -1518,7 +1525,7 @@ export const actions = {
     const clone = await cloneState(ctx)
     // The last night of the automatic update, read from its record: one line the morning reads, and nothing
     // at all when the night had nothing to say or the reader put it away.
-    const nightly = nightlyView(await latestNightly())
+    const nightly = nightlyView(await latestNightly(), localDay(new Date()))
     const projects = withoutHidden(
       uniqueByRoot((await ctx.host.projects()).filter((project) => project.root)),
       hiddenHomes(settings.settings),

@@ -383,12 +383,13 @@ function Column() {
 }
 
 /**
- * A panel anchored to the right of a foot item, which is where the rail's 24px buttons are: it opens on the
- * pointer reaching the button, closes when the pointer leaves both (with the usual moment of grace over the
- * 8px between them), and closes on Escape and on any scroll, because it is anchored where it opened.
+ * A panel anchored to the right of a foot item, which is where the rail's 24px buttons are: it closes when
+ * the pointer leaves both (with the usual moment of grace over the 8px between them), on Escape and on any
+ * scroll, because it is anchored where it opened. Whoever uses it decides what opens it — a click for the
+ * update button, the pointer for the line of the last night.
  *
- * Two items at the foot of the rail use it — the update button and the line of the last night — so the
- * mechanics of "a panel beside a 24px button at the bottom of the window" are written once.
+ * Two items at the foot of the rail use it, so the mechanics of "a panel beside a 24px button at the bottom
+ * of the window" are written once.
  */
 function useFootPanel(onOpenChange?: (open: boolean) => void) {
   const [open, setOpen] = useState(false)
@@ -572,7 +573,7 @@ function UpdateButton({
 function Nightly({ nightly, onChanged }: { nightly: NightlyView; onChanged: () => Promise<unknown> }) {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string>()
-  const { open, anchor, frame, toggle, close, enter, leave } = useFootPanel()
+  const { open, anchor, frame, toggle, close, openPanel, enter, leave } = useFootPanel()
   const dismiss = async () => {
     if (pending) return
     setError(undefined)
@@ -594,10 +595,19 @@ function Nightly({ nightly, onChanged }: { nightly: NightlyView; onChanged: () =
         ? 'text-warning'
         : 'text-muted-foreground'
   return (
-    <div className="relative flex" onPointerEnter={enter} onPointerLeave={leave} ref={frame}>
+    <div
+      className="relative flex"
+      onPointerEnter={() => {
+        enter()
+        // The rail's idiom: the pointer resting on an item opens its panel. A click does the same, for touch.
+        if (!open) openPanel()
+      }}
+      onPointerLeave={leave}
+      ref={frame}
+    >
       <Icon
         className="size-6"
-        label={`Last night: ${nightly.line}`}
+        label={nightly.line}
         onClick={() => (open ? close() : toggle())}
         title={nightly.line}
       >
@@ -611,7 +621,9 @@ function Nightly({ nightly, onChanged }: { nightly: NightlyView; onChanged: () =
         >
           <div className="flex flex-col gap-1.5">
             <div className="flex items-start justify-between gap-2">
-              <span className="text-[12.5px] text-foreground">Last night, {nightly.at}</span>
+              <span className="text-[12.5px] text-foreground">
+                {nightly.today ? `Last night, ${nightly.at}` : `${nightly.day}, ${nightly.at}`}
+              </span>
               <button
                 aria-label="Dismiss the last night's report"
                 className="flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground/70 outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default"

@@ -292,6 +292,8 @@ export interface NightlyView {
   day: string
   /** The hour it was armed for (`HH:MM`). */
   at: string
+  /** The record is the machine's today: the night that just passed — "last night". */
+  today: boolean
   outcome: 'ran' | 'busy' | 'failed'
   /** The one line. */
   line: string

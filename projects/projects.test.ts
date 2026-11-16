@@ -1319,7 +1319,7 @@ test('the morning reads one line: what moved, what restarted, what failed, what 
   assert.equal(supervisor.supervisor, true)
   assert.equal(
     supervisor.line,
-    'Nightly update: 3 commits, aaaaaaa → bbbbbbb · restarted 1 project in 2s · bin/ changed: stop and start the host to load the new supervisor',
+    'Nightly update: 3 commits, aaaaaaa → bbbbbbb · restarted 1 project in 2s · bin/ changed: the new supervisor needs a manual stop and start',
   )
   // A machine that was working is not a failure: it stepped aside, and says for how long.
   const busy = nightReport({ kind: 'busy', working: ['api', 'web'], retry: true }, 'now')
@@ -1353,19 +1353,25 @@ test('the rail draws the record it was given, and nothing when there is nothing 
       supervisor: true as const,
     },
   }
-  assert.deepEqual(nightlyView(record), {
+  assert.deepEqual(nightlyView(record, '2026-05-12'), {
     day: '2026-05-12',
     at: '03:00',
+    today: true,
     outcome: 'ran',
     line: 'Nightly update: 120 commits, 3b2f1a0 → 9c1d2e4',
     lines: ['updated 120 commits (3b2f1a0 → 9c1d2e4)'],
     supervisor: true,
   })
+  // An older record is not "last night" any more: the view says which night it is.
+  assert.equal(nightlyView(record, '2026-05-14')?.today, false)
   // Put away, never run, nothing to say: no item on the rail.
-  assert.equal(nightlyView({ ...record, seenAt: '2026-05-12T09:00:00.000Z' }), undefined)
-  assert.equal(nightlyView({ ...record, result: undefined }), undefined)
-  assert.equal(nightlyView({ ...record, result: { ...record.result, line: undefined } }), undefined)
-  assert.equal(nightlyView(undefined), undefined)
+  assert.equal(nightlyView({ ...record, seenAt: '2026-05-12T09:00:00.000Z' }, '2026-05-12'), undefined)
+  assert.equal(nightlyView({ ...record, result: undefined }, '2026-05-12'), undefined)
+  assert.equal(
+    nightlyView({ ...record, result: { ...record.result, line: undefined } }, '2026-05-12'),
+    undefined,
+  )
+  assert.equal(nightlyView(undefined, '2026-05-12'), undefined)
 })
 
 test('the retry after a busy machine is one, and only by the host that took the turn', () => {

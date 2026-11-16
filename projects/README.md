@@ -207,17 +207,19 @@ writing it (or taking it out) applies at once: the extension is reinstalled on a
 
 **Idle** means no conversation is working, in any project of this machine. Before touching anything, the
 host that took the night asks every host that is up — `state`, in parallel, the same question the rail's
-dots answer — and one working conversation is enough to step aside. It records `skipped: 1 project was
-working (api)` and tries **once** again 45 minutes later; after that, only the next night. A host that does
-not answer is not counted as working, and is not restarted either.
+dots answer — and one working conversation is enough to step aside. The record then says
+`Nightly update skipped: 1 project was working (api) — trying again in 45 min`, and it tries **once** again
+45 minutes later; after that, only the next night. A host that does not answer is not counted as working,
+and is not restarted either.
 
 The night does exactly what a click of the button does: the clone once through Ultimate's own update, then
 every host that runs old code restarted one at a time, this one last (it swaps itself through its own
 supervisor). The refusals are the button's, too — a dirty clone, another branch or a landing stops the
 night; a diverged clone only skips the update. **`bin/` is the exception a restart cannot fix**: a pull that
-touched the supervisor cannot be applied by a swap, so the line says `bin/ changed: stop and start the host
-to load the new supervisor` and the machine keeps running the old one until you stop that host and start it
-again.
+touched the supervisor cannot be applied by a swap, so the line ends with `bin/ changed: the new supervisor
+needs a manual stop and start` and every host keeps running the old one until a host is stopped and started
+again — from that project's tile (`stop` in its panel, then a click to bring it up), or by stopping the
+terminal Ultimate and running it again.
 
 If the machine is asleep at `at`, or no window is open, the night comes the next time a host is up: a day
 that has no run yet and whose hour has passed runs **at once** (that is the catch-up). It never runs twice
@@ -299,7 +301,7 @@ restarts every window of the machine — behind the screen.
   which refuses a dirty, switched or diverged clone instead of resolving it.
 - It does not restart the window that clicked it directly: that window asks the core to swap itself.
 - It does not restart the supervisor: when the nightly update's pull touches `bin/`, the line of the morning
-  says so and waits for you to stop that host and start it again.
+  says so and waits for a host to be stopped and started by hand.
 - It does not resolve a dirty or diverged clone, and it does not update while a conversation is working
   anywhere on the machine: it steps aside, tries once more in 45 minutes, and then waits for the next
   night.

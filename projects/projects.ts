@@ -1110,7 +1110,7 @@ export function nightReport(input: NightlyInput, at: string): NightlyResult {
   }
   if (input.kind === 'busy') {
     const count = input.working.length
-    const names = input.working.slice(0, 3).join(', ')
+    const names = input.working.slice(0, 3).join(', ') + (count > 3 ? ', …' : '')
     const when = input.retry
       ? `trying again in ${Math.round(NIGHTLY_RETRY / 60_000)} min`
       : 'the next run is tomorrow'
@@ -1147,8 +1147,11 @@ export function nightReport(input: NightlyInput, at: string): NightlyResult {
     )
   if (failed.length) parts.push(`${failed.length} failed (${failed.map((outcome) => outcome.name).join(', ')})`)
   if (held.length) parts.push(`${held.length} held back`)
-  if (supervisor) parts.push('bin/ changed: stop and start the host to load the new supervisor')
-  for (const outcome of report.projects) lines.push(outcomeLine(outcome))
+  // The one layer a swap cannot load. The machine keeps running the old supervisor until a person stops and
+  // starts a host: said plainly, never counted as an update that took.
+  if (supervisor) parts.push('bin/ changed: the new supervisor needs a manual stop and start')
+  for (const outcome of report.projects)
+    lines.push(outcome.result === 'self' ? `${outcome.name} — this host restarted itself` : outcomeLine(outcome))
   const line = parts.length ? `Nightly update: ${parts.join(' · ')}` : undefined
   const installFailed = pull?.ok === true && pull.install === 'failed'
   const wrong = (pull !== undefined && !pull.ok) || failed.length > 0 || installFailed
@@ -1168,15 +1171,20 @@ function shortSha(sha: string): string {
 
 /**
  * The report as the rail draws it, or nothing: nothing when the machine did not run, when the night had
- * nothing to say, and when the reader already put it away (`seenAt`).
+ * nothing to say, and when the reader already put it away (`seenAt`). `today` is the machine's local day
+ * now: a record of an older day is not "last night" any more, and the item says which night it is.
  */
-export function nightlyView(record: NightlyRecord | undefined): NightlyView | undefined {
+export function nightlyView(
+  record: NightlyRecord | undefined,
+  today: string,
+): NightlyView | undefined {
   if (!record || record.seenAt) return undefined
   const result = record.result
   if (!result?.line) return undefined
   return {
     day: record.day,
     at: record.at,
+    today: record.day === today,
     outcome: result.outcome,
     line: result.line,
     lines: result.lines ?? [],
