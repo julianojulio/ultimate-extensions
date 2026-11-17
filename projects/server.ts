@@ -134,7 +134,7 @@ import { basename, dirname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { promisify } from 'node:util'
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
-import type { JsonValue } from '@earendil-works/chord'
+import type { JsonValue } from '@earendil-works/chord/json'
 import { defineExtension } from '@earendil-works/pi-durable'
 import {
   adjustHidden,

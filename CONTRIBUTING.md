@@ -39,6 +39,23 @@ answers the two host packages the limiter imports when they are not linked.
 
 There is no build step: the files in the repository are the files that run.
 
+## Types
+
+The tests strip the types — Node runs `.ts` by erasing them —, so nothing above would catch a type
+error. `tsconfig.json` is the check for that, and only that (`noEmit`):
+
+```sh
+sh typecheck.sh
+```
+
+It is local, not CI, because it needs the machine: each extension's `node_modules`, linked to the
+Ultimate clone by `install.sh`, is where `@earendil-works/*` and React's types come from, and the
+clone itself is where the app's own types (`@/sdk`, `@/components/ui/*`, `@types`) are. The script
+finds the clone through that link, so it checks in a worktree or a landing checkout too; where the
+link is missing it checks nothing and exits 0, in one line saying what to run. `tsconfig.json` maps
+those paths to `../ultimate` — the standard setup, `~/src/ultimate` beside this repository — which
+is what your editor reads; point it there if your clone lives elsewhere.
+
 ## Pull requests
 
 Fork, branch, run the tests above, then open the pull request against `main`. One extension per pull
@@ -60,6 +77,8 @@ ultimate-extensions/
 │   ├── ISSUE_TEMPLATE/             # a bug report and a feature request form
 │   └── pull_request_template.md    # one extension per PR, and what the change does not do
 ├── install.sh                      # links each extension into ~/.ultimate/extensions/<name>
+├── tsconfig.json                   # what that check reads (`noEmit`); paths for an editor too
+├── typecheck.sh                    # the local type check: tsc from the clone, where the link says it is
 ├── LICENSE                         # MIT
 ├── SECURITY.md                     # how to report privately, and what matters here
 ├── projects/                       # the rail of this computer's projects
