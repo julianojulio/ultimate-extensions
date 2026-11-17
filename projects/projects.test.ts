@@ -137,8 +137,8 @@ import type { Measurement, Project, PullResult, Section, UpdateReport } from './
 
 /** A row as the server sends it: up, with so many conversations working and so many questions. */
 const running = (working: number | null, openQuestions: number | null = 0): Project => ({
-  name: 'gta2xlwifi-lineage',
-  root: '/projects/gta2xlwifi-lineage',
+  name: 'inventory-api',
+  root: '/projects/inventory-api',
   current: false,
   running: { pid: 4242, url: 'http://127.0.0.1:4748' },
   working,
@@ -148,10 +148,10 @@ const running = (working: number | null, openQuestions: number | null = 0): Proj
 
 /** The same row with the host stopped: no `running` and with the command to copy. */
 const stopped: Project = {
-  name: 'robsoncosta',
-  root: '/projects/robsoncosta',
+  name: 'analytics',
+  root: '/projects/analytics',
   current: false,
-  command: 'ultimate /projects/robsoncosta',
+  command: 'ultimate /projects/analytics',
 }
 
 test('the state comes written: the colour is never the only signal', () => {
@@ -229,7 +229,7 @@ test('only a running project that is not this window has something to stop', () 
 })
 
 test('the command copied is the command that runs, with quotes when the path asks for them', () => {
-  assert.equal(command('/projects/robsoncosta'), 'ultimate /projects/robsoncosta')
+  assert.equal(command('/projects/analytics'), 'ultimate /projects/analytics')
   assert.equal(command('/projects/my project'), `ultimate '/projects/my project'`)
   assert.equal(command("/projects/it's"), `ultimate '/projects/it'\\''s'`)
   // A project without `project.json` has no path: the row says it does not know, it does not guess a
@@ -246,9 +246,9 @@ test('the row of a stopped project shows the command to copy, and no measurement
 })
 
 test('the tile shows initials, in two letters', () => {
-  assert.equal(initials('app_evangelho'), 'AE')
-  assert.equal(initials('gta2xlwifi-lineage'), 'GL')
-  assert.equal(initials('robsoncosta'), 'RO')
+  assert.equal(initials('billing_app'), 'BA')
+  assert.equal(initials('inventory-api'), 'IA')
+  assert.equal(initials('analytics'), 'AN')
   // Space, full stop and hyphen separate alike: two words give the first letter of each one.
   assert.equal(initials('my project'), 'MP')
   assert.equal(initials('ultra.js'), 'UJ')
@@ -262,7 +262,7 @@ test('the tile shows initials, in two letters', () => {
 test('the tile does not carry the port: the label is letters and the port lives in the href', () => {
   const project = running(1)
   // What is drawn in the block: no number, no address.
-  assert.equal(initials(project.name), 'GL')
+  assert.equal(initials(project.name), 'IA')
   assert.doesNotMatch(initials(project.name), /\d/)
   // What the click opens: the whole URL, with the port.
   assert.equal(linkOf(project), 'http://127.0.0.1:4748')
@@ -288,7 +288,7 @@ test('the rail groups: running on top, stopped below, this window’s first', ()
   )
   assert.deepEqual(
     stoppedRows.map((project) => project.name),
-    ['beta', 'robsoncosta'],
+    ['analytics', 'beta'],
   )
   // A project that only has a measurement is not up: without `running` it is stopped, and the click
   // brings the host up.
@@ -444,7 +444,7 @@ test('the host comes up in the project, without a window and without a port chos
   // No `--port`: the program takes the port itself (from 4747, retrying the next one when it is taken)
   // and publishes it in the lock. A port chosen from outside could not be reserved, so two starts at the
   // same instant would pick the same one.
-  assert.deepEqual(startArgs('/projects/robsoncosta'), ['/projects/robsoncosta', '--no-open'])
+  assert.deepEqual(startArgs('/projects/analytics'), ['/projects/analytics', '--no-open'])
   assert.equal(startProgram('/opt/ultimate'), '/opt/ultimate/bin/ultimate.ts')
 })
 
@@ -515,7 +515,7 @@ test('a dead-pid lock is not a host: there is nothing to stop, and the row says 
   assert.deepEqual(stopDecision(undefined, undefined, false), { action: 'none' })
   assert.deepEqual(stopDecision(undefined, 48362, true), { action: 'none' })
   // The dead lock stays on disk, but the row — and the button — read only the live pid.
-  assert.equal(stateWord({ name: 'gta2xlwifi-lineage', root: '/x', current: false }), 'stopped')
+  assert.equal(stateWord({ name: 'inventory-api', root: '/x', current: false }), 'stopped')
 })
 
 /** A measurement of the rail's wave, with the time it was made at. */
@@ -593,30 +593,30 @@ test('the question number fits in the corner of the tile: 1..9, 9+ above, and no
 
 test('the tile’s sentence says state, counts and the time of the measurement', () => {
   // Stopped: the usual sentence, because there is no reading at all to quote.
-  assert.equal(tileTitle(stopped, undefined, undefined), 'robsoncosta — stopped, click to start it')
+  assert.equal(tileTitle(stopped, undefined, undefined), 'analytics — stopped, click to start it')
   // Up: the state, the counts as the panel writes them, and **when** the measurement is from.
   assert.equal(
     tileTitle(running(2), measurement(2, 1), '21:53'),
-    'gta2xlwifi-lineage — running · 2 working · 1 unanswered question · measured at 21:53 — open it in this tab',
+    'inventory-api — running · 2 working · 1 unanswered question · measured at 21:53 — open it in this tab',
   )
   assert.equal(
     tileTitle(running(0), measurement(0, 0), '21:53'),
-    'gta2xlwifi-lineage — running · 0 working · no unanswered questions · measured at 21:53 — open it in this tab',
+    'inventory-api — running · 0 working · no unanswered questions · measured at 21:53 — open it in this tab',
   )
   // The wave has not come back yet: the tile says it did not measure, instead of faking an idle.
   assert.equal(
     tileTitle(running(0), undefined, undefined),
-    'gta2xlwifi-lineage — running · not measured yet — open it in this tab',
+    'inventory-api — running · not measured yet — open it in this tab',
   )
   // No answer: `counts unavailable` with the reason, and never a zero.
   assert.equal(
     tileTitle(running(null), measurement(null, null, { reason: 'no answer in 3s' }), '21:53'),
-    'gta2xlwifi-lineage — running · counts unavailable — no answer in 3s · measured at 21:53 — open it in this tab',
+    'inventory-api — running · counts unavailable — no answer in 3s · measured at 21:53 — open it in this tab',
   )
   // This window's project: the sentence ends by saying that it is this window.
   assert.equal(
     tileTitle({ ...running(0), current: true }, measurement(0, 0), '21:53'),
-    'gta2xlwifi-lineage — running · 0 working · no unanswered questions · measured at 21:53 — this window',
+    'inventory-api — running · 0 working · no unanswered questions · measured at 21:53 — this window',
   )
 })
 
@@ -647,11 +647,11 @@ test('the wave keeps one measurement per project that is up, with the time of th
     ],
   }
   const measurements = readingWave(section)
-  assert.deepEqual(Object.keys(measurements).sort(), ['gta2xlwifi-lineage', 'soPerguntas', 'travado'])
+  assert.deepEqual(Object.keys(measurements).sort(), ['inventory-api', 'soPerguntas', 'travado'])
   // The time is the reading's, not now's: the tile shows when the indicator is from.
-  assert.equal(measurements['gta2xlwifi-lineage'].at, section.at)
-  assert.equal(measurements['gta2xlwifi-lineage'].working, 2)
-  assert.equal(measurements['gta2xlwifi-lineage'].openQuestions, 1)
+  assert.equal(measurements['inventory-api'].at, section.at)
+  assert.equal(measurements['inventory-api'].working, 2)
+  assert.equal(measurements['inventory-api'].openQuestions, 1)
   // The silence of a stuck host arrives as `null` with the reason, not as zero.
   assert.deepEqual(measurements['travado'], {
     working: null,
@@ -661,7 +661,7 @@ test('the wave keeps one measurement per project that is up, with the time of th
   })
   // A measured zero stays zero (and not `null`): it is an answer, not an absence.
   assert.deepEqual(readingWave({ at: section.at, splash: true, projects: [running(0, 0)] }), {
-    'gta2xlwifi-lineage': { working: 0, openQuestions: 0, at: section.at },
+    'inventory-api': { working: 0, openQuestions: 0, at: section.at },
   })
   // Each row keeps the time **its own** host answered: a slow host in the wave does not make the others
   // claim an older reading.
@@ -672,7 +672,7 @@ test('the wave keeps one measurement per project that is up, with the time of th
       projects: [{ ...running(2, 1), measuredAt: '2026-11-10T03:22:40.000Z' }],
     }),
     {
-      'gta2xlwifi-lineage': {
+      'inventory-api': {
         working: 2,
         openQuestions: 1,
         at: '2026-11-10T03:22:40.000Z',
@@ -1615,9 +1615,9 @@ test('the tone of a tile comes from the folder name alone, and stays cool', () =
     'neon-api',
     'notes',
     'website',
-    'robsoncosta',
+    'analytics',
     'discord-llm-bot',
-    'gta2xlwifi-lineage',
+    'inventory-api',
   ]) {
     const { hue, chroma } = colourOf(name)
     assert.ok(hue >= 130 && hue <= 265, `${name} is cool (${hue})`)

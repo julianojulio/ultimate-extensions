@@ -403,23 +403,23 @@ test('a stream aborted while queued ends with an aborted error and frees nothing
 
 test('a name this machine has no provider for is reported once, and never wrapped', async () => {
   const home = await tempHome(
-    JSON.stringify({ rateLimiter: { limits: { [model.provider]: 2, cirthan: 3 } } }),
+    JSON.stringify({ rateLimiter: { limits: { [model.provider]: 2, acme: 3 } } }),
   )
   try {
     const { host, notices, provided, runtime } = fakeHost(home)
     const state = await install(host)
 
-    assert.deepEqual(state.limits, { [model.provider]: 2, cirthan: 3 }, 'the limits in force')
+    assert.deepEqual(state.limits, { [model.provider]: 2, acme: 3 }, 'the limits in force')
     assert.deepEqual([...state.wrapped], [model.provider], 'only the provider that exists here')
-    assert.deepEqual(state.unknown, ['cirthan'])
+    assert.deepEqual(state.unknown, ['acme'])
     assert.deepEqual(notices, [
-      'rate-limiter: no provider named "cirthan" on this machine; ' +
-        'rateLimiter.limits.cirthan limits nothing',
+      'rate-limiter: no provider named "acme" on this machine; ' +
+        'rateLimiter.limits.acme limits nothing',
     ])
 
     const reloaded = await install(host)
     assert.equal(reloaded, state, 'the same state')
-    assert.deepEqual(state.unknown, ['cirthan'])
+    assert.deepEqual(state.unknown, ['acme'])
     assert.equal(notices.length, 1, 'the same set of names is not reported again')
 
     // One level of wrapper: a request in flight holds one slot, and the second load wraps the
@@ -439,7 +439,7 @@ test('a name this machine has no provider for is reported once, and never wrappe
 
 test('the report comes again when the set of names with no provider changes', async () => {
   const home = await tempHome(
-    JSON.stringify({ rateLimiter: { limits: { [model.provider]: 1, cirthan: 3 } } }),
+    JSON.stringify({ rateLimiter: { limits: { [model.provider]: 1, acme: 3 } } }),
   )
   const settings = join(home, '.ultimate/settings.json')
   try {
@@ -450,15 +450,15 @@ test('the report comes again when the set of names with no provider changes', as
     // A second name with no provider here: the new set is reported, in one line.
     await writeFile(
       settings,
-      JSON.stringify({ rateLimiter: { limits: { [model.provider]: 1, cirthan: 3, typo: 2 } } }),
+      JSON.stringify({ rateLimiter: { limits: { [model.provider]: 1, acme: 3, typo: 2 } } }),
     )
     const both = await install(host)
-    assert.deepEqual(both.unknown, ['cirthan', 'typo'])
+    assert.deepEqual(both.unknown, ['acme', 'typo'])
     assert.equal(notices.length, 2)
     assert.equal(
       notices[1],
-      'rate-limiter: no provider named "cirthan", "typo" on this machine; ' +
-        'rateLimiter.limits.cirthan and rateLimiter.limits.typo limit nothing',
+      'rate-limiter: no provider named "acme", "typo" on this machine; ' +
+        'rateLimiter.limits.acme and rateLimiter.limits.typo limit nothing',
     )
 
     // The person fixes both names: nothing left to report, and nothing reported.

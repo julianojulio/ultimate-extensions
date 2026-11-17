@@ -1,351 +1,119 @@
 # projects — a rail of projects
 
-A column on the left edge of the window, one tile per project: running hosts on top, stopped ones
-below, each with a colour of its own, a presence dot and the number of unanswered questions. One click
-opens a project or brings it up. When the clone Ultimate runs from has moved — or a host of this machine
-is still running the code from before it did — a button at the foot of the rail updates the clone once
-and restarts every host that needs it, and the same thing can happen by itself once a night, when no
-conversation is working.
+A column on the left edge of the window, one tile per project: running hosts on top, stopped ones below,
+each with a colour of its own, a presence dot and the number of unanswered questions. One click opens a
+project or brings it up, and a button at the foot updates the clone and restarts every window of the
+machine when there is something to do.
 
 ![The rail on the left edge](screenshots/rail.png)
 
 Ultimate ships its own `projects` extension, a switcher of running instances. This one has the same name
 and takes the same `shell.rail` slot, so it **replaces** the built-in one: remove this folder from
-`~/.ultimate/extensions/` (or `sh install.sh` in a clone without it) to get the built-in rail back.
+`~/.ultimate/extensions/` (or run `sh install.sh` in a clone without it) to get the built-in rail back.
 
 ## How it works
 
-One tile per project, drawn with its initials (`billing-app` → `BA`). This window's project comes first,
-then the other running ones, a thin line, then the stopped ones — and inside each group the tiles are a
-**stack**: the project whose rail was opened last is the first tile, the one before it the second. That
-is what makes going back easy: switch to another project to capture something, come back, and the project
-you left is right below this one.
+One tile per project, drawn with its initials (`billing-app` → `BA`) in a tone taken from its folder name
+alone — the same colour on every machine, copied from the app's own tile so a project has one colour in
+both rails.
 
-Each tile takes a **tone** from its folder name alone: a muted, cool wash behind the letters, the same
-colour on every machine and in every window, with the family of Ultimate itself in brand. Nothing else is
-warm (amber counts questions, red is an error) and nothing else is violet. The tone says *which* project,
-the letters stay legible, and the dot and the number still say the rest. The rule is the app's own: it is
-copied from `extensions/sidebar/tile.tsx` of the Ultimate clone (see `colourOf` in `projects.ts`), so a
-project has one colour in both rails.
+This window's project comes first, then the other running ones, a thin line, then the stopped ones. Inside
+each group the tiles are a **stack**: the project whose rail was opened last is the first tile, so the
+project you just left sits right below this one. The order belongs to the machine, not to a window
+(`~/.ultimate/projects-shown.json`), so every window agrees on what came before.
 
-The order is the machine's, not a window's — every window of every project reads the same stamps
-(`~/.ultimate/projects-shown.json`, below), so they all agree on what came before. A project this machine
-has no stamp for is placed by when it opened, and two with neither are ordered by name. The price of
-"always the second" is that a tile can change place: opening a project moves its tile up in the rails of
-this machine, this window's included.
+The dot in the corner is the state: grey stopped, green up and idle, pulsing while the last reading saw it
+working, hollow when the host does not answer. The number is the count of questions without an answer
+(`9+` from ten up).
 
-The dot in the corner is the project's state: grey stopped, green up and idle, pulsing while the last
-reading saw it working, hollow when the host does not answer. The number in the corner is the count of
-questions without an answer (`9+` from ten up), in amber.
-
-A tile is one click: a running project opens in this tab, a stopped one is brought up. A click that goes
-to another project **says it is on its way**: the tile pulses, its `title` and the panel say `opening…`,
-and a thin brand bar runs along the top of the window until the next page paints — the target builds its
-web bundle first, which takes a few seconds. Nothing keeps running for it: the mark goes with the
-navigation, with the page the Back gesture brings back, or, for a click that went nowhere, after fifteen
-seconds.
-
-Hovering or focusing a tile opens its panel after a moment, with what the tile does not fit: the project's
-repo (`owner/repo` from its `origin`, with a lock when it is private), the port, the state in words, how
-many conversations are working and how many questions wait, the command to copy, the stop button and, on a
-stopped project, `forget…`. The numbers are measured when the panel opens, with the time of the reading.
-The repo is read in the background, once per process and folder (`git remote get-url origin`, then one `gh
-repo view` for the visibility): a project that is not on GitHub, one with no `origin`, and one whose
-visibility `gh` could not answer simply have no chip, rather than a guessed one.
+Hovering or focusing a tile opens its panel with what the tile does not fit: the repo (`owner/repo` from its
+`origin`, with a lock when it is private), the port, the state in words, the working conversations and open
+questions with the time of the reading, the command to copy and the buttons.
 
 ![The tile panel](screenshots/panel.png)
 
-The foot of the rail **sums the tiles**, from the numbers the wave already brought — nothing is asked for
-it: `1 for you · 2 working`, questions first, and no line at all when both are zero. In the 48px column it
-is drawn as two small lines, the amber questions above the brand working ones, each with the whole
-sentence in its `title`.
-
-The rail also **steps aside for another one**: if any other extension fills `shell.rail` — a fleet
-switcher of your own, say — this extension draws nothing and asks nothing, so a window never shows two
-rails. The phone's list is in the sidebar slot and is not affected.
-
-On the phone there is no rail: the same list, compact, stays in the sidebar, and each project's name takes
-its tone.
+The foot of the rail sums the tiles from the numbers the wave already brought — `1 for you · 2 working`,
+questions first, and no line at all when both are zero.
 
 ## Using it
 
-- **Switch project** — click a running tile: it opens in this tab. ⌘/Ctrl+click opens a new tab, like
-  any link.
-- **Bring a stopped project up** — click its tile; it shows a spinner until the host answers. If it
-  does not come up, the tile gains a red ring and the panel says why.
-- **Stop a host** — the button in the tile's panel. A host this extension did not start (born in a
-  terminal or in a supervisor) stops only after a confirmation, with the port and the pid in the
-  question.
-- **Create a project** — `+` at the bottom of the rail: type the folder's path, absolute or starting
-  with `~`. The host comes up and its tile appears; the card offers `Open it`. Its first run, its
-  onboarding and the trust decision happen in that project's own window. A folder whose project was
-  forgotten comes back to the rail instead of being refused.
-- **Refresh the projects** — `⟳` reads every project again now; each tile's panel says when its
-  numbers were read.
-- **Forget a project** — `forget…` in the panel of a stopped project (not this window's): the tile
-  leaves the rail and the project's conversations stay where they are. Nothing is deleted; the panel
-  says how to bring it back.
-- **Turn the splash on or off** — the switch at the bottom of the rail. One click, and one click back.
-- **Update and restart the machine** — the button at the bottom of the rail, beside `⟳`, which appears
-  only when there is something to do. See below.
-
-## Update and restart the machine
-
-Every project window of this machine reads the same clone of Ultimate, so one update brings them all
-forward — but each of them has to be *restarted* to run it, and the ones running `server/` code carry the
-old code until then. One host can do that for all of them.
-
-The button at the foot of the rail is there only when there is something to do, and its tooltip says what
-(`Update and restart: update 5 commits · restart 2 projects`). One click does, in this order:
-
-1. **Updates the clone once**, through Ultimate's own update: fetch, fast-forward, and an install when the
-   lockfile asks for one. This extension never runs `git`, `pnpm` or the clone's lock itself. If the update
-   **refuses** — uncommitted changes in the clone, another branch, the lander landing — the refusal is shown
-   whole and **nothing is restarted**: no host comes back onto a clone that is half-way through something.
-   The one exception is a clone that has **diverged** from origin: it is clean and committed and only lacks
-   the fast-forward, which a restart does not need, so the refusal is shown (`pull refused: main has
-   diverged from origin/main — restarting what is already here`) and the rest of the click goes on. The
-   button says so before the click, too: `Restart only: restart 2 projects · main has diverged from
-   origin/main, so the update waits`. (A clone with nothing to bring in is not updated at all, so a dirty
-   checkout does not block the restarts.)
-2. **Asks every host of the machine** whether it is still running code the clone has moved past, and puts
-   the ones that are in the list.
-3. **Restarts them one at a time**, never five at once, and waits for each: the supervisor type-checks the new
-   core and answers only when it is prepared (up to two minutes), and then the announced generation has 20
-   seconds to be the one serving. The port keeps answering throughout the swap with the old process, so the
-   port alone would call every restart done — and a host that does not get there is reported, never called
-   ready.
-4. **This window last**, through the SDK: the process answering the click cannot swap itself, so the window
-   asks the core, which swaps and rolls back if the new one does not activate.
-
-What came of it is a panel beside the button: the pull (with the install's own line when it failed), one
-line per project (`billing-app — restarted in 4s`, `api — no answer in 20s`), and any rollback of this
-window. The same host on the same build is not tried twice inside ten minutes, this window's own included —
-a swap that was rolled back is not asked for again inside the window. A host that came back still old for
-another reason turns up again later instead of restarting in a loop.
-
-![The button at the foot of the rail and what one click reported](screenshots/update.png)
-
-What to keep in mind:
-
-- **Restarting another window interrupts the turn running there.** The agent resumes from its checkpoint
-  once the new process is up — nothing is lost, but the answer waits for the restart.
-- **A host that does not come back stays `unavailable`.** Its tile keeps the hollow dot, its panel says why,
-  and the summary says `no answer in 20s`. Nothing retries it on its own.
-- **A dirty clone or another branch is not resolved here.** That is the update's refusal, and it stops the
-  whole click. A clone that has diverged restarts the machine anyway — what is on disk is what runs —, and
-  the merge that lets it fast-forward again is the update's own `Update with @ultimate` card.
-- **Nothing is pushed.** The button fetches, fast-forwards and restarts; it never touches your branches,
-  never resolves a conflict and never resets anything.
-
-The same flow can run by itself, once a night, on a machine that is not working: see
-[the nightly update](#the-nightly-update).
+- **Switch project** — click a running tile; ⌘/Ctrl+click opens a new tab. The target builds its web bundle
+  first, so the tile says `opening…` until the next page paints.
+- **Bring a stopped project up** — click its tile. If it does not come up, the tile gains a red ring and the
+  panel says why.
+- **Create a project** — `+` at the bottom of the rail, then the folder's path, absolute or from `~`.
+- **Refresh** — `⟳` reads every project again now, and each panel says when its numbers were read.
+- **Forget a project** — `forget…` in the panel of a stopped project: the tile leaves the rail, and the home,
+  with its conversations, stays where it was.
+- **Update and restart** — the button beside `⟳`, there only when there is something to do: it updates the
+  clone once through Ultimate's own update, then restarts, one at a time, every host running old code, this
+  window last. It never pushes and never resolves a conflict; a diverged clone restarts anyway and waits for
+  a merge, which shows as amber, never red.
+- **Splash on or off** — the switch at the bottom of the rail.
 
 ## Configuration
 
-Three keys of this machine's `~/.ultimate/settings.json` are this extension's: the splash switch, the
-homes the rail hides, and the nightly update. Everything else in the file stays as it is. Two other files
-of its own, `~/.ultimate/projects-shown.json` and `~/.ultimate/projects-restarts.json`, hold the order of
-the tiles and the restarts that were tried; a third, `~/.ultimate/projects-update-<day>.json`, is the
-night.
+Three keys of `~/.ultimate/settings.json` are this extension's; every other key of the file stays as it is.
 
-### The order of the tiles
-
-Every page load of the rail stamps its project, and that is all this file is:
-
-```json
-{ "/home/juliano/.ultimate/projects/billing-app-1a2b3c4d": 1770000000000 }
-```
-
-The key is the project's **home**, the same one the panel shows, and the value is when its rail was last
-opened, in epoch ms. `list` reads it on every reading. `shown` keeps the 100 newest homes so the file does
-not grow for ever, and writes it through a temporary and a `rename`. A file that cannot be read whole is
-treated as empty — the rail is then ordered by when each project opened, without a word about it, and
-nothing is rewritten. A home in the file that is not a project of this machine any more is simply not
-used. Deleting the file is safe: the order starts from scratch and rebuilds itself as the windows are
-opened.
-
-### The splash animation
+**The splash switch.** The switch flips one entry, and a different set of extensions means a new web bundle,
+so every open window reloads:
 
 ```json
 { "extensions": { "disable": ["splash"] } }
 ```
 
-The switch flips that entry: off adds `splash`, on removes it, and every other key of the file stays as
-it is. With no file there, turning it off creates the file. The file is rewritten as normalised JSON —
-the old formatting is lost, no key is.
-
-Writing it by hand has the same effect: a different set of extensions means a new web bundle, so
-**every open window reloads**. The switch's tooltip says so. To undo, remove `splash` from the list and
-save, or click the switch again.
-
-A project's `.ultimate/settings.json` can say the opposite on top; this switch speaks about this
-machine's layer only.
-
-### Hidden projects
-
-`forget…` adds the project's **home** to a list of that name — the home, not the project's name: two
-folders can share a name, and the home is unique. The panel shows that home abbreviated with `~` (its
-tooltip has the whole path), and the list takes it written either way, `~` counting from this machine's
-home: a home that is not under it — an instance with its own home — is written in full.
+**Hidden projects.** `forget…` adds the project's **home** — not its name; two folders can share a name — to
+this list, and the tile is gone on the next reading. Nothing is deleted: remove the home and save, or ask for
+the folder again with `+`, and the tile comes back.
 
 ```json
 { "projects": { "hidden": ["~/.ultimate/projects/old-app-1a2b3c4d"] } }
 ```
 
-The rail reads that list on every reading, so a home in it has no tile. **Nothing is deleted**: the
-home stays where it was, with the project's `state.sqlite` — that is, with its conversations. To bring
-the project back, remove its home from `projects.hidden` and save; the tile returns on the next reading.
-Asking for its folder again with the `+` does the same, and the answer says so. Writing the list by
-hand does the same — the refusals (this window, a host that is up) belong to the panel's action, not to
-the file.
-
 ![The panel's forget question](screenshots/forget.png)
 
-A home in the list that is not a project of this machine hides nothing; a list that is not a list, or a
-file that cannot be read whole, hides nobody — and a `forget…` that would have to rewrite such a file
-refuses without writing anything.
-
-### The restarts that were tried
-
-A third file of its own, `~/.ultimate/projects-restarts.json`, is the anti-loop of the update button: one
-line per host and build it tried to restart, and when.
-
-```json
-{ "/home/juliano/.ultimate/projects/billing-app-1a2b3c4d@3f2a91c0d4b8": 1770000000000 }
-```
-
-The key is the project's **home** plus the build id of the process that was running (a host that restarted
-comes back on another build, so it gets a new line). The stamp is written before the first restart, the
-entries older than ten minutes are dropped on every click, and a file that cannot be read whole is read as
-no attempt at all. Deleting it is safe: it only means the next click may retry a host it would have left
-alone.
-
-### The nightly update
-
-Once a night, on a machine that is not working, the button can run by itself. One key turns it on:
+**The nightly update.** Once a night, on a machine where no conversation is working, the update button runs by
+itself. `at` is a local `HH:MM`, and **absent is off**:
 
 ```json
 { "projects": { "update": { "at": "03:00" } } }
 ```
 
-`at` is a local time, `HH:MM` (`03:00`, `22:30`). **Absent is off**, which is the factory state. A value that
-is not a time (`"3:00"`, `"24:00"`, a number) is ignored and said in a notice that names it — guessing
-midnight would update the machine at an hour nobody asked for. The key is read when the night is armed, so
-writing it (or taking it out) applies at once: the extension is reinstalled on a live settings change.
+A value that is not a time is ignored, with a notice that names it. The host that takes the night asks every
+host that is up whether anything is working; one working conversation and it steps aside, trying once more 45
+minutes later and then waiting for the next night. It never runs twice in a local day, and a machine asleep at
+`at` catches up the next time a host is up. In the morning one quiet line at the foot of the rail says what
+moved, what restarted, what failed and what waited for a merge; the ✕ puts it away for the day.
 
-**Idle** means no conversation is working, in any project of this machine. Before touching anything, the
-host that took the night asks every host that is up — `state`, in parallel, the same question the rail's
-dots answer — and one working conversation is enough to step aside. The record then says
-`Nightly update skipped: 1 project was working (api) — trying again in 45 min`, and it tries **once** again
-45 minutes later; after that, only the next night. A host that does not answer is not counted as working,
-and is not restarted either.
-
-The night does exactly what a click of the button does: the clone once through Ultimate's own update, then
-every host that runs old code restarted one at a time, this one last (it swaps itself through its own
-supervisor). The refusals are the button's, too — a dirty clone, another branch or a landing stops the
-night; a diverged clone only skips the update, and the night gets its own outcome (`diverged`): the moon is
-amber, never red, and the line says how many commits of yours are not on `origin/<branch>` and that the pull
-waits for a merge (`6 commits of yours are not on origin/main, so the pull waits for a merge · restarted 6
-projects in 25s`). That line appears even when there is nothing to restart: the merge is the information.
-**`bin/` is the exception a restart cannot fix**: a pull that touched the supervisor cannot be applied by a
-swap, so the line says `bin/ changed: the new supervisor needs a manual stop and start` and every host keeps
-running the old one until a host is stopped and started again —
-from that project's tile (`stop` in its panel, then a click to bring it up), or by stopping the terminal
-Ultimate and running it again.
-
-If the machine is asleep at `at`, or no window is open, the night comes the next time a host is up: a day
-that has no run yet and whose hour has passed runs **at once** (that is the catch-up). It never runs twice
-in the same local day — the turn is a file only one host of the machine can create.
-
-In the morning the rail has one quiet line at its foot, a moon between the tiles and `⟳`: what moved
-(`120 commits, 3b2f1a0 → 9c1d2e4`), what restarted and in how long, what failed, what it stepped aside for,
-what waited for a merge (amber, with the number of your commits, and the range `update` offers as a DiffsHub
-link when it has one). Hovering or clicking it opens the detail; the ✕ puts it away for the day. One item,
-never one per project, and nothing at all after a night with nothing to do.
-
-### The record of the night
-
-One file of its own, named by the local day, is both the election and the record:
-`~/.ultimate/projects-update-2026-05-12.json`.
-
-```json
-{
-  "day": "2026-05-12",
-  "at": "03:00",
-  "by": "/home/juliano/.ultimate/projects/billing-app-1a2b3c4d",
-  "claimedAt": "2026-05-12T06:00:00.012Z",
-  "attempts": 1,
-  "result": {
-    "outcome": "ran",
-    "at": "2026-05-12T06:00:02.640Z",
-    "line": "Nightly update: 120 commits, 3b2f1a0 → 9c1d2e4 · restarted 2 projects in 4s",
-    "lines": ["updated 120 commits (3b2f1a0 → 9c1d2e4)", "api — restarted in 2s"]
-  }
-}
-```
-
-The file's **creation** is the election: it is created exclusively (`O_EXCL`), so exactly one host of the
-machine takes the turn for a day, and every other host finds it there and does nothing at all — seven
-windows arming the same hour produce one run. The winner rewrites it through a temporary and a `rename`
-with what came of the night (`result`), the retry it owes (`retryAt`, only after a busy machine and only
-once), and whether its line was read (`seenAt`). A night whose pull was refused for divergence records
-`"outcome": "diverged"` and a `diverged` block of its own with the branch, the number of your commits and the
-address `update` offered (`{ "branch": "main", "ahead": 6, "compare": "https://diffshub.com/…" }`), so the
-panel says how many commits of yours the merge waits for without reading the clone again, and links the range
-only when that address is `https`. A file that cannot be read is no record at all: nothing is repaired or
-rewritten, and that day does not run again — the file is what says the turn was taken. The next night drops
-the older ones, so one file stays. Deleting it is safe: the next start takes the turn again and that day's
-night runs.
+![The button at the foot of the rail and what one click reported](screenshots/update.png)
 
 ## Actions
 
-For agents and automation, one line each:
+For agents and automation. The last five are **user only**: an agent calling them is refused, so nothing
+restarts every window, stops a host or hides a project behind the screen.
 
-- `list` — this machine's projects with state, port and command, in the order the rail draws them;
-  `{ measure: false }` skips asking the other hosts.
-- `shown` — no arguments: stamps this project in `~/.ultimate/projects-shown.json`, which is what orders
-  the rail. The rail calls it once per page load.
-- `measure` — `{ name }`: that project measured now, with the time of the answer.
-- `state` — this host only: working conversations and open questions, its build and generation, and whether
-  the clone has moved past it; another host asks it.
-- `seen` — no arguments: the line of the last night was read, so the rail stops drawing it.
-- `update` — no arguments: updates the clone once through Ultimate's update and restarts, one at a time,
-  every host of the machine that answered that the clone has moved past it. Returns the pull and one result
-  per host; `restartSelf: true` when this window's own host is among them (the window asks the SDK to swap).
-  Refused by an agent, like `stop`.
-- `start` — `{ name }`: brings that host up, and returns when it answers.
-- `create` — `{ path }`: brings up the host of a new folder and returns the new project; a forgotten
-  project's folder comes back to the rail (`unhidden: true`).
-- `stop` — `{ name, confirm? }`: takes that host down; `needsConfirm` when it was not started here.
-- `forget` — `{ name }`: hides that project from the rail by adding its home to `projects.hidden` in this
-  machine's settings. Nothing is deleted. It is refused for this window's project and for a host that is
-  up (stop it first).
-- `splash` — `{ enabled }`: turns the splash animation on or off in this machine's settings.
+| Action | What it does |
+| --- | --- |
+| `list` | The projects with state, port and command, in the order the rail draws them; `{ measure: false }` skips the other hosts. |
+| `shown` | Stamps this project in the order file. The rail calls it once per page load. |
+| `measure` | `{ name }`: that project measured now, with the time of the answer. |
+| `state` | This host only: working conversations, open questions, its build and generation. |
+| `seen` | The line of the last night was read, so the rail stops drawing it. |
+| `start` | `{ name }`: brings that host up and returns when it answers. |
+| `stop` **user only** | `{ name, confirm? }`: takes that host down; asks first when this extension did not start it. |
+| `create` **user only** | `{ path }`: brings up the host of a new folder and returns the new project. |
+| `forget` **user only** | `{ name }`: hides that project from the rail by adding its home to `projects.hidden`. Refused for this window and for a host that is up. |
+| `splash` **user only** | `{ enabled }`: turns the splash animation on or off. |
+| `update` **user only** | Updates the clone once and restarts the hosts the clone moved past, one at a time. Returns the pull and one result per host. |
 
-`stop`, `create`, `forget`, `splash` and `update` are user actions: an agent calling them is refused, so
-nothing stops a host, creates or hides a project, flips this machine's splash behind the screen — or
-restarts every window of the machine — behind the screen.
+## Limits
 
-## What it does not do
-
-- It does not poll: readings happen when the rail is opened, entered or focused, on `⟳`, and after
-  every action that changes the machine.
-- It does not stop the host of this window — stop it from another window.
-- It does not delete anything: a forgotten project is hidden from this rail, and its home — with the
-  conversations — stays where it was.
-- It does not kill a host it did not start without asking.
-- It does not run `git` or `pnpm` to change anything, and it never pushes: the update button asks Ultimate's
-  update, which refuses a dirty, switched or diverged clone instead of resolving it. The only programs it
-  runs are the two that name a project's repo, `git remote get-url origin` and `gh repo view`, read-only and
-  in the background.
-- It does not draw a second rail: another extension in `shell.rail` wins, and this one draws nothing.
-- It does not restart the window that clicked it directly: that window asks the core to swap itself.
-- It does not restart the supervisor: when the nightly update's pull touches `bin/`, the line of the morning
-  says so and waits for a host to be stopped and started by hand.
-- It does not resolve a dirty or diverged clone, and it does not update while a conversation is working
-  anywhere on the machine: it steps aside, tries once more in 45 minutes, and then waits for the next
-  night.
-- It does not run the night twice in one day, and it does not run one at all while `projects.update.at` is
-  absent or cannot be read.
-- It does not reach another computer: only what runs on this one, on loopback.
+- It does not poll: a reading happens when the rail is opened, entered or focused, on `⟳`, and after every
+  action that changes the machine.
+- It does not delete anything and it does not stop what it did not start: a forgotten project is hidden, and a
+  host born in a terminal stops only after a confirmation naming its port and pid.
+- It does not run `git` or `pnpm`: the button asks Ultimate's own update, which refuses a dirty or switched
+  clone instead of resolving it. The only programs it runs are the two that name a project's repo,
+  `git remote get-url origin` and `gh repo view`, read-only and in the background.
+- It does not draw a second rail: another extension in `shell.rail` wins and this one draws nothing, so a
+  window never shows two.

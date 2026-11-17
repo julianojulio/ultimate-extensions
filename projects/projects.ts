@@ -239,8 +239,8 @@ export function linkOf(project: Project): string | undefined {
 }
 
 /**
- * The initials of the tile, in up to two letters: `app_evangelho` → `AE`, `gta2xlwifi-lineage` → `GL`,
- * `robsoncosta` → `RO`. Two words give the first letter of each one; a single word gives its first two
+ * The initials of the tile, in up to two letters: `billing-app` → `BA`, `inventory-api` → `IA`,
+ * `analytics` → `AN`. Two words give the first letter of each one; a single word gives its first two
  * letters. Two projects can coincide in their initials — the panel gives the name and the path.
  */
 export function initials(name: string): string {
@@ -1180,8 +1180,8 @@ export function clock(minutes: number): string {
   return `${String(hours).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`
 }
 
-/** The local day of a moment, `YYYY-MM-DD` — the machine's day, not UTC's: at 23:30 in São Paulo it is
- * still today there, whatever the UTC date says. */
+/** The local day of a moment, `YYYY-MM-DD` — the machine's day, not UTC's: at 23:30 in a zone three
+ * hours behind UTC it is still today there, whatever the UTC date says. */
 export function localDay(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
