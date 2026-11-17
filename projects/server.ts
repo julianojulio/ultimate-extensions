@@ -3,7 +3,7 @@
  * and brings a host up, brings one down or creates one when someone clicks a tile, in the tile's panel
  * or on the `+`.
  *
- * The code lives in the machine extensions' repository, `~/src/ultimate-extensions/projects`; what
+ * The code lives in this repository, `~/src/ultimate-extensions/projects`; what
  * Ultimate loads is the symlink `~/.ultimate/extensions/projects`, made by its `install.sh`. Editing is
  * in the repository, and the hot reload follows the link.
  *

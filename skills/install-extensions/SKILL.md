@@ -1,12 +1,12 @@
 ---
 name: install-extensions
-description: Install the machine extensions of ultimate-extensions into ~/.ultimate/extensions, suggesting only the ones this machine's own use justifies and asking with one card that carries each extension's screenshot. Use when someone asks to install these extensions, pastes the README's "Install with an agent" prompt, or asks for the projects rail or the rate limiter on this machine.
+description: Install the user extensions of ultimate-extensions into ~/.ultimate/extensions, suggesting only the ones this machine's own use justifies and asking with one card that carries each extension's screenshot. Use when someone asks to install these extensions, pastes the README's "Install with an agent" prompt, or asks for the projects rail or the rate limiter on this machine.
 ---
 
-# Install the machine extensions
+# Install the extensions
 
-These extensions belong to the machine, not to a project: they live in `~/.ultimate/extensions/<name>`, they
-apply to every project on this machine, and they load hot — no restart. This file is the whole flow; the
+These are user extensions, not project ones: they live in `~/.ultimate/extensions/<name>`, so they apply to
+every project on this machine, and they load hot — no restart. This file is the whole flow; the
 repository's `README.md` summarises it and each extension's own `README.md` goes into detail.
 
 Five steps: find the repository, measure this machine, ask with one card, install what was picked, prove it and
@@ -119,7 +119,7 @@ the folder here, and links the folder's `node_modules` at the Ultimate clone's (
 this machine names a provider. Ask with a small card of its own, measured like the first one: one `multi` listing
 the providers registered here (`ultimate.models()`, with the number of models each one holds — say so in the
 `detail`), `recommended` the provider whose calls fill the trace ("68 of 68 model calls on this machine went to
-`cirthan-dev`"); and one `choice` for the ceiling — 2, 3, 5 or 10, with 3 recommended, the repository's own
+`anthropic`"); and one `choice` for the ceiling — 2, 3, 5 or 10, with 3 recommended, the repository's own
 starting point. Then write it into `~/.ultimate/settings.json`:
 
 ```json
