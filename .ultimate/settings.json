@@ -5,7 +5,12 @@
     }
   },
   "lander": {
-    "checks": ["node --test $(find . -name '*.test.ts' -not -path '*/node_modules/*')"],
+    "checks": [
+      [
+        { "command": "node --test $(find . -name '*.test.ts' -not -path '*/node_modules/*')", "timeout": 300 },
+        { "command": "sh typecheck.sh", "timeout": 300 }
+      ]
+    ],
     "push": "origin"
   }
 }
