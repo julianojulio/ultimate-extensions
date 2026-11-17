@@ -25,7 +25,7 @@ import type {
   SimpleStreamOptions,
   TranscriptContext,
 } from '@earendil-works/pi-ai'
-import type { JsonValue } from '@earendil-works/chord'
+import type { JsonValue } from '@earendil-works/chord/json'
 import { defineExtension } from '@earendil-works/pi-durable'
 import { LIMITS, ProviderLimiter, resolveLimits } from './limiter.ts'
 import type { Limits, Resolved } from './limiter.ts'

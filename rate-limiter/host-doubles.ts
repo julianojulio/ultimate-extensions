@@ -9,12 +9,20 @@
  * `limiter.test.ts` answers the two packages with this file only where they do not resolve, so a
  * machine with the link tests the host's own code.
  */
-import type { AssistantMessage, AssistantMessageEvent } from '@earendil-works/pi-ai'
+import type {
+  AssistantMessage,
+  AssistantMessageEvent,
+  AssistantMessageEventStream,
+} from '@earendil-works/pi-ai'
 
 type Step = IteratorResult<AssistantMessageEvent>
 
-/** The event stream one assistant response arrives on. */
-export function createAssistantMessageEventStream() {
+/**
+ * The event stream one assistant response arrives on, typed as the host's: it is the same behavior,
+ * and the cast is only because the host's stream is a class with private state, which a double
+ * cannot have.
+ */
+export function createAssistantMessageEventStream(): AssistantMessageEventStream {
   const events: AssistantMessageEvent[] = []
   const waiting: ((step: Step) => void)[] = []
   let closed = false
@@ -57,7 +65,7 @@ export function createAssistantMessageEventStream() {
         }
       }
     },
-  }
+  } as unknown as AssistantMessageEventStream
 }
 
 /** The host's `defineExtension`: it types an extension, and nothing else. */
