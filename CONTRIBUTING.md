@@ -45,6 +45,9 @@ Fork, branch, run the tests above, then open the pull request against `main`. On
 request, and a line in it saying what the change does not do. CI runs that same test command on
 Node 26, and installs nothing: there is nothing to install.
 
+An agent opening a pull request upstream, against the Ultimate clone, follows
+`.ultimate/skills/open-pr/SKILL.md`: the user approves the title and the body before anything is pushed.
+
 ### Pull before your next landing
 
 Landings are automatic here: the lander runs every check and pushes to `main` when they pass. A pull
