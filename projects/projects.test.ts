@@ -404,40 +404,40 @@ test('a rail that was shown stamps its home, newest first, and the file is cappe
 
 test('the dialog’s path expands ~ and refuses what is not absolute', () => {
   const home = '/home/juliano'
-  assert.equal(absolutePath('~/src/novo', home), '/home/juliano/src/novo')
+  assert.equal(absolutePath('~/src/fresh', home), '/home/juliano/src/fresh')
   assert.equal(absolutePath('/srv/app', home), '/srv/app')
   assert.equal(absolutePath('~', home), '/home/juliano')
   // Space around it is the user's, not the path's.
-  assert.equal(absolutePath('  ~/src/novo  ', home), '/home/juliano/src/novo')
+  assert.equal(absolutePath('  ~/src/fresh  ', home), '/home/juliano/src/fresh')
   // `.` and `..` resolve: the path that is brought up is the one the dialog shows.
-  assert.equal(absolutePath('~/src/../outro', home), '/home/juliano/outro')
+  assert.equal(absolutePath('~/src/../other', home), '/home/juliano/other')
   // Empty and relative are not a path: the dialog asks for one instead of guessing a folder.
   assert.equal(absolutePath('', home), undefined)
   assert.equal(absolutePath('   ', home), undefined)
-  assert.equal(absolutePath('src/novo', home), undefined)
-  assert.equal(absolutePath('./novo', home), undefined)
-  // `~outro` is not the home of whoever is typing: never expand someone else's name.
-  assert.equal(absolutePath('~outro/src', home), undefined)
+  assert.equal(absolutePath('src/fresh', home), undefined)
+  assert.equal(absolutePath('./fresh', home), undefined)
+  // `~other` is not the home of whoever is typing: never expand someone else's name.
+  assert.equal(absolutePath('~other/src', home), undefined)
 })
 
 test('the home of a new project is <home>/.ultimate/projects/<name>-<8 hex>', () => {
   assert.equal(
-    projectHome('/home/juliano/src/novo', '/home/juliano'),
-    '/home/juliano/.ultimate/projects/novo-3f75ea87',
+    projectHome('/home/juliano/src/fresh', '/home/juliano'),
+    '/home/juliano/.ultimate/projects/fresh-cebee617',
   )
   // Same folder, same home: it is the calculation that makes the tile appear on its own after coming
   // up.
   assert.equal(
-    projectHome('/home/juliano/src/novo', '/home/juliano'),
-    projectHome('/home/juliano/src/novo', '/home/juliano'),
+    projectHome('/home/juliano/src/fresh', '/home/juliano'),
+    projectHome('/home/juliano/src/fresh', '/home/juliano'),
   )
   // Different folders with the same name do not collide: the hash is of the root.
   assert.notEqual(
-    projectHome('/a/novo', '/home/juliano'),
-    projectHome('/b/novo', '/home/juliano'),
+    projectHome('/a/fresh', '/home/juliano'),
+    projectHome('/b/fresh', '/home/juliano'),
   )
   // The user's home goes in whole, including when it is a test home.
-  assert.match(projectHome('/a/novo', '/tmp/h'), /^\/tmp\/h\/\.ultimate\/projects\/novo-[0-9a-f]{8}$/)
+  assert.match(projectHome('/a/fresh', '/tmp/h'), /^\/tmp\/h\/\.ultimate\/projects\/fresh-[0-9a-f]{8}$/)
 })
 
 test('the host comes up in the project, without a window and without a port chosen here', () => {
@@ -627,7 +627,7 @@ test('the wave keeps one measurement per project that is up, with the time of th
     projects: [
       running(2, 1),
       {
-        name: 'travado',
+        name: 'stuck',
         root: '/t',
         current: false,
         running: { pid: 7, url: 'http://127.0.0.1:4751' },
@@ -638,7 +638,7 @@ test('the wave keeps one measurement per project that is up, with the time of th
       stopped,
       // A project that is up and only has the question count measured does not lose its entry.
       {
-        name: 'soPerguntas',
+        name: 'questions-only',
         root: '/s',
         current: false,
         running: { pid: 8, url: 'http://127.0.0.1:4752' },
@@ -647,13 +647,13 @@ test('the wave keeps one measurement per project that is up, with the time of th
     ],
   }
   const measurements = readingWave(section)
-  assert.deepEqual(Object.keys(measurements).sort(), ['inventory-api', 'soPerguntas', 'travado'])
+  assert.deepEqual(Object.keys(measurements).sort(), ['inventory-api', 'questions-only', 'stuck'])
   // The time is the reading's, not now's: the tile shows when the indicator is from.
   assert.equal(measurements['inventory-api'].at, section.at)
   assert.equal(measurements['inventory-api'].working, 2)
   assert.equal(measurements['inventory-api'].openQuestions, 1)
   // The silence of a stuck host arrives as `null` with the reason, not as zero.
-  assert.deepEqual(measurements['travado'], {
+  assert.deepEqual(measurements['stuck'], {
     working: null,
     openQuestions: null,
     reason: 'no answer in 3s',
