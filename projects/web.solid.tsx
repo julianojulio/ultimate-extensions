@@ -1009,7 +1009,10 @@ function Tile(props: {
     clearTimeout(exit)
     clearTimeout(delayed)
   })
-  const running = () => props.project.running !== undefined
+  // Memos, because the row object is replaced by every reading: a tile keeps its own state (an error, a
+  // question it asks) unless what it shows actually changes, and its panel measures once when it opens.
+  const running = createMemo(() => props.project.running !== undefined)
+  const name = createMemo(() => props.project.name)
   const port = () => portOf(props.project.running?.url)
   const link = () => linkOf(props.project)
   const state = () =>
@@ -1033,7 +1036,7 @@ function Tile(props: {
   // The measurement is of the instant the panel opens — and the panel says when it is from. Closed, nothing
   // is measured: the tile keeps the rail's wave measurement, which is from when it was made.
   createEffect(
-    () => ({ open: panelOpen(), up: running(), name: props.project.name }),
+    () => ({ open: panelOpen(), up: running(), name: name() }),
     ({ open, up, name }) => {
       if (!open || !up) return
       let alive = true
@@ -1883,7 +1886,7 @@ function Row(props: {
   const [pending, setPending] = createSignal<'start' | 'stop'>()
   const [confirm, setConfirm] = createSignal<{ pid: number; url?: string }>()
   const [error, setError] = createSignal<string>()
-  const running = () => props.project.running !== undefined
+  const running = createMemo(() => props.project.running !== undefined)
   // What was said of one state does not hold for the other: a new measurement erases the warning and the
   // question.
   createEffect(
@@ -1940,27 +1943,6 @@ function Row(props: {
       setPending(undefined)
     }
   }
-
-  const action = () =>
-    props.project.current ? undefined : running() ? (
-      <RowButton
-        label={`Stop ${props.project.name}`}
-        onClick={() => void stop()}
-        pending={pending() === 'stop'}
-        title={`Stop the host${port() ? ` on ${port()}` : ''}${props.project.running ? ` (pid ${props.project.running.pid})` : ''}`}
-      >
-        <SquareIcon class="size-2.5 fill-current" />
-      </RowButton>
-    ) : (
-      <RowButton
-        label={`Start ${props.project.name}`}
-        onClick={() => void start()}
-        pending={pending() === 'start'}
-        title={copyable() ? `${copyable()} — started detached, no window` : 'Start the host'}
-      >
-        <PlayIcon class="size-2.5 fill-current" />
-      </RowButton>
-    )
 
   return (
     <div
@@ -2045,9 +2027,33 @@ function Row(props: {
           </Show>
           <RowMeasurement project={props.project} />
         </Show>
-        <Show when={action()}>
+        <Show when={!props.project.current}>
           <span class="pointer-coarse:opacity-100 ml-auto flex shrink-0 items-center opacity-0 transition-opacity group-hover/project:opacity-100 focus-within:opacity-100">
-            {action()}
+            <Switch
+              fallback={
+                <RowButton
+                  label={`Start ${props.project.name}`}
+                  onClick={() => void start()}
+                  pending={pending() === 'start'}
+                  title={
+                    copyable() ? `${copyable()} — started detached, no window` : 'Start the host'
+                  }
+                >
+                  <PlayIcon class="size-2.5 fill-current" />
+                </RowButton>
+              }
+            >
+              <Match when={running()}>
+                <RowButton
+                  label={`Stop ${props.project.name}`}
+                  onClick={() => void stop()}
+                  pending={pending() === 'stop'}
+                  title={`Stop the host${port() ? ` on ${port()}` : ''}${props.project.running ? ` (pid ${props.project.running.pid})` : ''}`}
+                >
+                  <SquareIcon class="size-2.5 fill-current" />
+                </RowButton>
+              </Match>
+            </Switch>
           </span>
         </Show>
       </div>
