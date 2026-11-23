@@ -239,7 +239,7 @@ export interface UpdateReport {
   projects: RestartOutcome[]
   /** The clone's own commits, when the pull was refused for divergence and the hosts restarted anyway. */
   diverged?: Diverged
-  /** This window's host is in the list and only the window can restart it: `web.tsx` calls the SDK's
+  /** This window's host is in the list and only the window can restart it: `web.solid.tsx` calls the SDK's
    * `restart()` and the core does the swap with its own rollback. */
   restartSelf: boolean
 }

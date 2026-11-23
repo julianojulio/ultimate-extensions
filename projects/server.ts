@@ -1684,7 +1684,7 @@ export const actions = {
    * This project's rail was just opened: it stamps this host's home in this machine's
    * `~/.ultimate/projects-shown.json`, which is what orders the rail in every window — the project whose
    * rail was opened last is the first tile, so coming back to this one makes it the second: where you came
-   * from. `web.tsx` calls it once per page load, when the rail mounts.
+   * from. `web.solid.tsx` calls it once per page load, when the rail mounts.
    *
    * It is not a user action: loading a page is not a gesture, and the only thing it writes is the order of
    * the tiles. The write goes through a temporary and a `rename`, and the file keeps the `SHOWN_CAP` newest
@@ -1818,7 +1818,7 @@ export const actions = {
    * 2. Every host of the machine asked what only it knows: does the clone run past this process?
    * 3. Those that said yes are restarted **one at a time**, in the rail's order, this window's own last and
    *    never here: the process answering this call cannot swap itself, so the answer carries `restartSelf`
-   *    and `web.tsx` asks the SDK's `restart()` — the core does that swap, with its own rollback.
+   *    and `web.solid.tsx` asks the SDK's `restart()` — the core does that swap, with its own rollback.
    *
    * Every attempt is stamped per home+build in `~/.ultimate/projects-restarts.json` **before** the first
    * restart, and the same pair is left alone for ten minutes: a host that came back still old for another

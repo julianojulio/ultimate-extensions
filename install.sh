@@ -40,7 +40,7 @@ for path in "$repo"/*/; do
   name=${path%/}
   name=${name##*/}
   # Only a folder that is a real extension: node_modules is not here, and .git does not match this glob.
-  if [ ! -f "$repo/$name/server.ts" ] && [ ! -f "$repo/$name/web.tsx" ]; then
+  if [ ! -f "$repo/$name/server.ts" ] && [ ! -f "$repo/$name/web.solid.tsx" ]; then
     continue
   fi
 

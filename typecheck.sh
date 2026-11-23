@@ -2,7 +2,7 @@
 # The local type check: `tsconfig.json`, run by the `tsc` of the Ultimate clone.
 #
 # It is local because it needs the machine. `install.sh` links each extension's `node_modules` to the
-# clone, which is where `@earendil-works/*` and React's types come from, and the app's own types
+# clone, which is where `@earendil-works/*` and the app's types come from, and the app's own types
 # (`@/sdk`, `@/components/ui/*`) and `@types` live in the clone itself. Neither is in a clean clone or
 # in a checkout whose setup has not run, and a check that cannot run must say so and pass, not look
 # like a broken landing: it exits 0 with one line naming what is missing and what fixes it.
@@ -19,8 +19,8 @@ repo=$(cd -P "$(dirname "$0")" && pwd)
 clone=
 for path in "$repo"/*/; do
   name=${path%/}
-  # Only a folder that is a real extension: one with server.ts or web.tsx.
-  if [ ! -f "$name/server.ts" ] && [ ! -f "$name/web.tsx" ]; then
+  # Only a folder that is a real extension: one with server.ts or web.solid.tsx.
+  if [ ! -f "$name/server.ts" ] && [ ! -f "$name/web.solid.tsx" ]; then
     continue
   fi
   if [ ! -L "$name/node_modules" ]; then

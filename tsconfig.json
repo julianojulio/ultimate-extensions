@@ -5,6 +5,7 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "jsx": "react-jsx",
+    "jsxImportSource": "@solidjs/web",
     "types": ["node"],
     "typeRoots": ["../ultimate/node_modules/@types"],
     "strict": true,

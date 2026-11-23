@@ -49,7 +49,7 @@ sh typecheck.sh
 ```
 
 It is local, not CI, because it needs the machine: each extension's `node_modules`, linked to the
-Ultimate clone by `install.sh`, is where `@earendil-works/*` and React's types come from, and the
+Ultimate clone by `install.sh`, is where `@earendil-works/*` and the app's own types come from, and the
 clone itself is where the app's own types (`@/sdk`, `@/components/ui/*`, `@types`) are. The script
 finds the clone through that link, so it checks in a worktree or a landing checkout too; where the
 link is missing it checks nothing and exits 0, in one line saying what to run. `tsconfig.json` maps
@@ -89,7 +89,7 @@ ultimate-extensions/
 │   ├── server.ts                   # the actions
 │   ├── projects.ts                 # the pure calculations
 │   ├── types.ts                    # what the actions return
-│   ├── web.tsx                     # the rail, its tile panel and its dialogs
+│   ├── web.solid.tsx              # the rail, its tile panel and its dialogs
 │   ├── projects.test.ts
 │   └── screenshots/
 ├── rate-limiter/                   # a ceiling on simultaneous requests per provider
@@ -103,5 +103,5 @@ ultimate-extensions/
         └── SKILL.md                # the flow the README's "Install with an agent" follows
 ```
 
-An extension is a top-level folder with a `server.ts` or a `web.tsx` and a `README.md`. `install.sh`
+An extension is a top-level folder with a `server.ts` or a `web.solid.tsx` and a `README.md`. `install.sh`
 looks for exactly that, and so does the test command.

@@ -18,7 +18,7 @@ origem=${ULTIMATE_SOURCE:?ULTIMATE_SOURCE must point at the source checkout}
 # one is enough, whatever this branch calls the folders.
 modulos=
 for pasta in "$origem"/*/; do
-  if [ ! -f "$pasta/server.ts" ] && [ ! -f "$pasta/web.tsx" ]; then
+  if [ ! -f "$pasta/server.ts" ] && [ ! -f "$pasta/web.solid.tsx" ]; then
     continue
   fi
   # `cd` follows the link: what it printed is the modules' real place, wherever this checkout will be.
@@ -35,8 +35,8 @@ fi
 
 for pasta in */; do
   nome=$(basename "$pasta")
-  # Only a folder that is a real extension: one with server.ts or web.tsx.
-  if [ ! -f "$pasta/server.ts" ] && [ ! -f "$pasta/web.tsx" ]; then
+  # Only a folder that is a real extension: one with server.ts or web.solid.tsx.
+  if [ ! -f "$pasta/server.ts" ] && [ ! -f "$pasta/web.solid.tsx" ]; then
     continue
   fi
   if [ -e "$nome/node_modules" ] || [ -L "$nome/node_modules" ]; then
