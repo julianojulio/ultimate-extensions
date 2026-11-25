@@ -89,7 +89,7 @@ ultimate-extensions/
 │   ├── server.ts                   # the actions
 │   ├── projects.ts                 # the pure calculations
 │   ├── types.ts                    # what the actions return
-│   ├── web.solid.tsx              # the rail, its tile panel and its dialogs
+│   ├── web.solid.tsx               # the rail, its tile panel and its dialogs
 │   ├── projects.test.ts
 │   └── screenshots/
 ├── rate-limiter/                   # a ceiling on simultaneous requests per provider

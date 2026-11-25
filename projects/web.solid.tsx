@@ -1036,20 +1036,20 @@ function Tile(props: {
   // The measurement is of the instant the panel opens — and the panel says when it is from. Closed, nothing
   // is measured: the tile keeps the rail's wave measurement, which is from when it was made.
   createEffect(
-    () => ({ open: panelOpen(), up: running(), name: name() }),
-    ({ open, up, name }) => {
+    () => ({ open: panelOpen(), up: running(), project: name() }),
+    ({ open, up, project }) => {
       if (!open || !up) return
       let alive = true
       setMeasuring(true)
       api
-        .action(MeasureAction, { name })
+        .action(MeasureAction, { name: project })
         .then((result) => {
-          if (alive) props.onMeasured(name, result)
+          if (alive) props.onMeasured(project, result)
         })
         .catch((cause: unknown) => {
           // The panel invents no number: what failed becomes `unavailable` with the reason.
           if (alive)
-            props.onMeasured(name, {
+            props.onMeasured(project, {
               working: null,
               openQuestions: null,
               reason: errorMessage(cause),
@@ -1225,10 +1225,13 @@ function Tile(props: {
       class="relative flex w-full shrink-0 justify-center"
       data-project={props.project.name}
       data-status={running() ? 'running' : 'stopped'}
-      onBlur={(event) => {
+      // Focus and `focusin`, not `focus`: Solid attaches `onFocus` as a plain listener, and `focus` does
+      // not bubble, so a tile whose button or link was reached by `Tab` would never hear it. `focusin`
+      // and `focusout` do bubble, and the containment test keeps the panel open while the focus is in it.
+      onFocusIn={enter}
+      onFocusOut={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) leave()
       }}
-      onFocus={enter}
       onPointerEnter={enter}
       onPointerLeave={leave}
       ref={(element) => {
@@ -1812,7 +1815,7 @@ function PhoneList() {
       >
         <div class="mx-2 flex h-6 items-center gap-1">
           <CollapsibleTrigger class="group/projects flex h-6 cursor-pointer items-center gap-1 rounded-md px-1 section-label outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring">
-            <ChevronRightIcon class="size-3 transition-transform group-data-[state=open]/projects:rotate-90" />
+            <ChevronRightIcon class="size-3 transition-transform group-data-open/projects:rotate-90" />
             Projects
           </CollapsibleTrigger>
           <Show when={list.data()}>
@@ -2029,31 +2032,27 @@ function Row(props: {
         </Show>
         <Show when={!props.project.current}>
           <span class="pointer-coarse:opacity-100 ml-auto flex shrink-0 items-center opacity-0 transition-opacity group-hover/project:opacity-100 focus-within:opacity-100">
-            <Switch
-              fallback={
-                <RowButton
-                  label={`Start ${props.project.name}`}
-                  onClick={() => void start()}
-                  pending={pending() === 'start'}
-                  title={
-                    copyable() ? `${copyable()} — started detached, no window` : 'Start the host'
-                  }
-                >
-                  <PlayIcon class="size-2.5 fill-current" />
-                </RowButton>
+            {/* One button whose label, title and handler follow the state: a `Switch` around the
+                button would replace the node on a change, and a keyboard user who just started a host
+                would lose the focus that did it. */}
+            <RowButton
+              label={`${running() ? 'Stop' : 'Start'} ${props.project.name}`}
+              onClick={() => void (running() ? stop() : start())}
+              pending={pending() === (running() ? 'stop' : 'start')}
+              title={
+                running()
+                  ? `Stop the host${port() ? ` on ${port()}` : ''}${props.project.running ? ` (pid ${props.project.running.pid})` : ''}`
+                  : copyable()
+                    ? `${copyable()} — started detached, no window`
+                    : 'Start the host'
               }
             >
-              <Match when={running()}>
-                <RowButton
-                  label={`Stop ${props.project.name}`}
-                  onClick={() => void stop()}
-                  pending={pending() === 'stop'}
-                  title={`Stop the host${port() ? ` on ${port()}` : ''}${props.project.running ? ` (pid ${props.project.running.pid})` : ''}`}
-                >
+              <Switch fallback={<PlayIcon class="size-2.5 fill-current" />}>
+                <Match when={running()}>
                   <SquareIcon class="size-2.5 fill-current" />
-                </RowButton>
-              </Match>
-            </Switch>
+                </Match>
+              </Switch>
+            </RowButton>
           </span>
         </Show>
       </div>
@@ -2124,7 +2123,9 @@ function RowMeasurement(props: { project: Project }) {
   )
 }
 
-/** The button that brings a host up and down, at the end of the phone's row. */
+/** The button that brings a host up and down, at the end of the phone's row. A press turns it into the
+ * other action — and it stays the same node, focusable: `aria-disabled` instead of `disabled`, because a
+ * disabled button cannot hold the focus that pressed it, and the keyboard user would land on the body. */
 function RowButton(props: {
   label: string
   title: string
@@ -2135,10 +2136,12 @@ function RowButton(props: {
   return (
     <button
       aria-busy={props.pending ? 'true' : undefined}
+      aria-disabled={props.pending ? 'true' : undefined}
       aria-label={props.label}
-      class="flex size-4 cursor-pointer items-center justify-center rounded-sm text-muted-foreground/70 outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default"
-      disabled={props.pending}
-      onClick={props.onClick}
+      class="flex size-4 cursor-pointer items-center justify-center rounded-sm text-muted-foreground/70 outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring aria-disabled:cursor-default"
+      onClick={() => {
+        if (!props.pending) props.onClick()
+      }}
       title={props.title}
       type="button"
     >
